@@ -5,10 +5,8 @@ from PySide6.QtWidgets import (
     QApplication,
     QWidget,
     QVBoxLayout,
-    QHBoxLayout,
     QLabel,
-    QGridLayout,
-    QPushButton
+    QGridLayout
 )
 from PySide6.QtCore import Qt, QTimer, QEvent
 from PySide6.QtGui import QFont
@@ -66,14 +64,6 @@ class CalendarWidget(QWidget):
             screen.top() + 20
         )
 
-    def reset_position(self):
-        screen = QApplication.primaryScreen().availableGeometry()
-
-        self.move(
-            screen.right() - self.width() - 20,
-            screen.top() + 20
-        )
-
     def _setup_ui(self):
         self.main_layout = QVBoxLayout(self)
         self.main_layout.setContentsMargins(8, 8, 8, 8)
@@ -100,26 +90,11 @@ class CalendarWidget(QWidget):
         self.timer.start(300000)  # 5 phút
 
     def _create_header(self):
-        header_layout = QHBoxLayout()
-
         self.title = QLabel(datetime.now().strftime("%B %Y").upper())
         self.title.setAlignment(Qt.AlignCenter)
         self.title.setFont(QFont("Segoe UI", 19, QFont.Bold))
         self.title.setStyleSheet(TITLE_STYLE)
-
-        self.reset_button = QPushButton("↺")
-        self.reset_button.setFixedSize(32, 32)
-        self.reset_button.setToolTip("Reset position")
-        self.reset_button.clicked.connect(self.reset_position)
-
-        left_spacer = QWidget()
-        left_spacer.setFixedWidth(32)
-
-        header_layout.addWidget(left_spacer)
-        header_layout.addWidget(self.title, 1)
-        header_layout.addWidget(self.reset_button)
-
-        self.layout.addLayout(header_layout)
+        self.layout.addWidget(self.title)
 
     def _create_calendar(self):
         now = datetime.now()
