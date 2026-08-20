@@ -1,9 +1,13 @@
-CONTAINER_STYLE = """
-QWidget#container {
-    background-color: rgba(20, 20, 20, 225);
+OUTER_CONTAINER_STYLE = """
+QWidget#outerContainer {
+    background-color: rgba(28, 27, 22, 235);
     border-radius: 18px;
-    color: white;
 }
+"""
+
+TRANSPARENT_PANEL_STYLE = """
+background: transparent;
+border: none;
 """
 
 TITLE_STYLE = """
@@ -53,24 +57,59 @@ UPCOMING_TITLE_STYLE = """
 QLabel {
     color: white;
     background: transparent;
-    margin-top: 8px;
+    border: none;
 }
 """
 
-EVENT_STYLE = """
+EVENT_CARD_STYLE = """
 QLabel {
-    background-color: rgba(255, 255, 255, 20);
     color: white;
-    padding: 8px;
+    background-color: rgba(255, 255, 255, 20);
+    border: none;
     border-radius: 8px;
-    font-size: 13px;
+    padding: 10px;
+    font-family: "Segoe UI";
+    font-size: 14px;
+    font-weight: 500;
+}
+QLabel:hover {
+    background-color: rgba(255, 255, 255, 35);
 }
 """
 
 EMPTY_STYLE = """
 QLabel {
-    color: #999999;
+    color: #AAAAAA;
     background: transparent;
-    font-size: 13px;
+    border: none;
+    padding: 8px;
+}
+"""
+
+SCROLL_AREA_STYLE = """
+QScrollArea {
+    background: transparent;
+    border: none;
+}
+QScrollArea > QWidget > QWidget {
+    background: transparent;
+}
+QScrollBar:vertical {
+    background: transparent;
+    width: 8px;
+    margin: 0px;
+}
+QScrollBar::handle:vertical {
+    background: rgba(255, 255, 255, 80);
+    border-radius: 4px;
+    min-height: 20px;
+}
+QScrollBar::add-line:vertical,
+QScrollBar::sub-line:vertical {
+    height: 0px;
+}
+QScrollBar::add-page:vertical,
+QScrollBar::sub-page:vertical {
+    background: transparent;
 }
 """
