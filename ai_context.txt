@@ -1,0 +1,1691 @@
+﻿============================================================
+DESKTOP CALENDAR - AI PROJECT CONTEXT
+============================================================
+
+Generated: 08/21/2026 01:10:38
+
+Purpose:
+This file contains only the important source code and
+architecture information needed for an AI assistant to
+understand the project.
+
+Sensitive credentials, browser profiles, caches and generated
+files have been excluded.
+
+
+============================================================
+PROJECT STRUCTURE
+============================================================
+
+[FILE] app.py
+[FILE] config.py
+[FILE] config.example.json
+[FILE] README.md
+[FILE] ARCHITECTURE.md
+[FILE] requirements.txt
+[DIR] controllers
+[FILE] controllers\calendar_controller.py
+[FILE] controllers\__init__.py
+[DIR] models
+[FILE] models\calendar_event.py
+[FILE] models\__init__.py
+[DIR] services
+[FILE] services\base_calendar.py
+[FILE] services\combined_calendar.py
+[FILE] services\google_auth.py
+[FILE] services\google_calendar.py
+[FILE] services\google_calendar_scraper.py
+[FILE] services\google_tasks.py
+[FILE] services\__init__.py
+[DIR] ui
+[DIR]  ui\behaviors
+[DIR]  ui\components
+[DIR]  ui\dialogs
+[FILE] ui\calendar_widget.py
+[FILE] ui\styles.py
+[FILE] ui\__init__.py
+[FILE] ui\behaviors\frameless_window.py
+[FILE] ui\behaviors\__init__.py
+[FILE] ui\components\month_calendar.py
+[FILE] ui\components\upcoming_events.py
+[FILE] ui\components\__init__.py
+[DIR] utils
+[FILE] utils\date_utils.py
+[FILE] utils\__init__.py
+
+============================================================
+FILE: app.py
+============================================================
+
+import sys
+import ctypes
+
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap
+from PySide6.QtWidgets import QApplication
+
+from ui.calendar_widget import CalendarWidget
+
+
+def create_app_icon() -> QIcon:
+    pixmap = QPixmap(64, 64)
+    pixmap.fill(Qt.transparent)
+
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.Antialiasing)
+
+    painter.setBrush(QColor("#3B82F6"))
+    painter.setPen(Qt.NoPen)
+    painter.drawRoundedRect(4, 4, 56, 56, 12, 12)
+
+    painter.setBrush(QColor("#FFFFFF"))
+    painter.drawRoundedRect(10, 10, 44, 12, 4, 4)
+
+    painter.setPen(QColor("#FFFFFF"))
+    painter.setFont(QFont("Segoe UI", 22, QFont.Bold))
+    painter.drawText(
+        pixmap.rect().adjusted(0, 12, 0, 0),
+        Qt.AlignCenter,
+        "20",
+    )
+    painter.end()
+
+    return QIcon(pixmap)
+
+
+def main() -> None:
+    try:
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+            "LeoTran.DesktopCalendarWidget.2.0"
+        )
+    except Exception:
+        pass
+
+    app = QApplication(sys.argv)
+    app.setStyle("Fusion")
+
+    icon = create_app_icon()
+    app.setWindowIcon(icon)
+
+    widget = CalendarWidget()
+    widget.setWindowIcon(icon)
+    widget.show()
+
+    sys.exit(app.exec())
+
+
+if __name__ == "__main__":
+    main()
+
+============================================================
+FILE: config.py
+============================================================
+
+import json
+from pathlib import Path
+from typing import Any
+
+BASE_DIR = Path(__file__).resolve().parent
+CONFIG_PATH = BASE_DIR / "config.json"
+
+
+def load_config() -> dict[str, Any]:
+    if not CONFIG_PATH.exists():
+        raise FileNotFoundError(
+            "config.json was not found. Copy config.example.json to config.json "
+            "and fill in your calendar settings."
+        )
+
+    with CONFIG_PATH.open("r", encoding="utf-8") as file:
+        return json.load(file)
+
+============================================================
+FILE: config.example.json
+============================================================
+
+{
+  "calendar_url": "YOUR_PRIVATE_ICAL_URL",
+  "days_ahead": 14
+}
+
+============================================================
+FILE: README.md
+============================================================
+
+# Desktop Calendar
+
+A small PySide6 desktop calendar widget.
+
+## Architecture
+
+```text
+app.py
+config.py
+models/
+  calendar_event.py
+services/
+  base_calendar.py
+  google_calendar.py
+controllers/
+  calendar_controller.py
+ui/
+  calendar_widget.py
+  styles.py
+  behaviors/
+    frameless_window.py
+  components/
+    month_calendar.py
+    upcoming_events.py
+utils/
+  date_utils.py
+```
+
+`ui/calendar_widget.py` is only the top-level composition layer.
+
+## Run
+
+```bash
+pip install -r requirements.txt
+python app.py
+```
+
+## Configuration
+
+`config.json` contains a private Google Calendar iCal URL and should not be
+committed to Git. A safe template is included as `config.example.json`.
+
+## Future Add / Delete support
+
+The current iCal URL is read-only. To create, update, or delete events, add a
+new writable service using the Google Calendar API with OAuth 2.0.
+
+Recommended future files:
+
+```text
+services/
+  google_calendar_api.py
+
+ui/dialogs/
+  event_editor_dialog.py
+  recurrence_dialog.py
+
+ui/components/
+  event_card.py
+  calendar_toolbar.py
+```
+
+The existing `BaseCalendarService`, `CalendarEvent`, and `CalendarController`
+already provide the separation needed for this migration.
+
+============================================================
+FILE: ARCHITECTURE.md
+============================================================
+
+# Architecture notes
+
+## Why this structure scales better
+
+### `models/`
+Defines data used by the application. UI code no longer knows about raw iCal
+dictionaries.
+
+### `services/`
+Owns external calendar integrations. The current Google iCal feed is read-only.
+A future Google Calendar API service can implement the same interface.
+
+### `controllers/`
+Coordinates service operations and UI updates. Calendar downloads are run in a
+thread pool so network delays do not freeze the window.
+
+### `ui/components/`
+Contains reusable visual components. The month grid and upcoming-event list can
+change independently.
+
+### `ui/behaviors/`
+Contains window behavior that is unrelated to calendar logic.
+
+### `ui/calendar_widget.py`
+Only assembles the application window and connects signals.
+
+## Future event editing flow
+
+```text
+CalendarToolbar / EventDialog
+          |
+          v
+ CalendarController
+          |
+          v
+BaseCalendarService
+          |
+          v
+GoogleCalendarApiService
+```
+
+For recurring events, keep recurrence rules in `CalendarEvent.recurrence` and
+let the API service translate them to Google Calendar API recurrence strings.
+
+============================================================
+FILE: requirements.txt
+============================================================
+
+PySide6
+requests
+icalendar
+recurring-ical-events
+google-api-python-client
+google-auth-httplib2
+google-auth-oauthlib
+playwright
+
+============================================================
+FILE: controllers\calendar_controller.py
+============================================================
+
+from collections.abc import Callable
+
+from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal, Slot
+
+from models.calendar_event import CalendarEvent
+from services.base_calendar import BaseCalendarService
+
+
+class _WorkerSignals(QObject):
+    result = Signal(object)
+    error = Signal(str)
+    finished = Signal()
+
+
+class _Worker(QRunnable):
+    def __init__(self, job: Callable[[], object]) -> None:
+        super().__init__()
+        self.job = job
+        self.signals = _WorkerSignals()
+
+    @Slot()
+    def run(self) -> None:
+        try:
+            result = self.job()
+        except Exception as exc:
+            self.signals.error.emit(str(exc))
+        else:
+            self.signals.result.emit(result)
+        finally:
+            self.signals.finished.emit()
+
+
+class CalendarController(QObject):
+    """Coordinates UI and services and keeps network work off the UI thread."""
+
+    events_updated = Signal(list)
+    error = Signal(str)
+    busy_changed = Signal(bool)
+
+    def __init__(
+        self,
+        service: BaseCalendarService,
+        parent: QObject | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.service = service
+        self.thread_pool = QThreadPool.globalInstance()
+        self._busy = False
+
+    @property
+    def busy(self) -> bool:
+        return self._busy
+
+    def refresh(self) -> None:
+        if self._busy:
+            return
+
+        self._set_busy(True)
+
+        worker = _Worker(self.service.get_events)
+        worker.signals.result.connect(self._on_events_loaded)
+        worker.signals.error.connect(self.error.emit)
+        worker.signals.finished.connect(self._finish_task)
+        self.thread_pool.start(worker)
+
+    def create_event(self, event: CalendarEvent) -> None:
+        self._run_mutation(lambda: self.service.create_event(event))
+
+    def delete_event(self, event_id: str) -> None:
+        self._run_mutation(lambda: self.service.delete_event(event_id))
+
+    def _run_mutation(self, job: Callable[[], object]) -> None:
+        if self._busy:
+            return
+
+        self._set_busy(True)
+
+        worker = _Worker(job)
+        worker.signals.error.connect(self.error.emit)
+        worker.signals.finished.connect(self._finish_mutation)
+        self.thread_pool.start(worker)
+
+    @Slot(object)
+    def _on_events_loaded(self, result: object) -> None:
+        self.events_updated.emit(list(result))
+
+    @Slot()
+    def _finish_mutation(self) -> None:
+        self._set_busy(False)
+        self.refresh()
+
+    @Slot()
+    def _finish_task(self) -> None:
+        self._set_busy(False)
+
+    def _set_busy(self, value: bool) -> None:
+        if self._busy == value:
+            return
+
+        self._busy = value
+        self.busy_changed.emit(value)
+
+============================================================
+FILE: controllers\__init__.py
+============================================================
+
+from .calendar_controller import CalendarController
+
+__all__ = ["CalendarController"]
+
+============================================================
+FILE: models\calendar_event.py
+============================================================
+
+from dataclasses import dataclass, field
+from datetime import date, datetime
+from typing import Optional, Union
+
+DateLike = Union[date, datetime]
+
+
+@dataclass(slots=True)
+class CalendarEvent:
+    """Application-level event model.
+
+    UI code depends on this model rather than the Google/iCal payload format.
+    That keeps the UI independent from whichever calendar backend is used.
+    """
+    
+    summary: str
+    start: DateLike
+
+    end: Optional[DateLike] = None
+    event_id: Optional[str] = None
+    location: str = ""
+    description: str = ""
+    recurrence: list[str] = field(default_factory=list)
+
+    url: str = ""
+    organizer: str = ""
+    attendees: list[str] = field(default_factory=list)
+    reminders: list[str] = field(default_factory=list)
+
+    item_type: str = "event"
+
+    @property
+    def all_day(self) -> bool:
+        return not isinstance(self.start, datetime)
+
+    @property
+    def event_date(self) -> date:
+        if isinstance(self.start, datetime):
+            return self.start.date()
+        return self.start
+
+    @property
+    def time_text(self) -> str:
+        if isinstance(self.start, datetime):
+            return self.start.strftime("%H:%M")
+        return "All day"
+
+    @property
+    def time_range_text(self) -> str:
+        if not isinstance(self.start, datetime):
+            return "All day"
+
+        start_text = self.start.strftime("%H:%M")
+
+        if isinstance(self.end, datetime):
+            end_text = self.end.strftime("%H:%M")
+            return f"{start_text} - {end_text}"
+
+        return start_text
+
+    def sort_key(self) -> tuple:
+        return (
+            self.event_date,
+            self.all_day,
+            self.time_text,
+            self.summary.lower(),
+        )
+
+============================================================
+FILE: models\__init__.py
+============================================================
+
+from .calendar_event import CalendarEvent
+
+__all__ = ["CalendarEvent"]
+
+============================================================
+FILE: services\base_calendar.py
+============================================================
+
+from abc import ABC, abstractmethod
+
+from models.calendar_event import CalendarEvent
+
+
+class BaseCalendarService(ABC):
+    """Backend contract used by the rest of the application."""
+
+    supports_write = False
+
+    @abstractmethod
+    def get_events(self, days_ahead: int | None = None) -> list[CalendarEvent]:
+        raise NotImplementedError
+
+    def create_event(self, event: CalendarEvent) -> CalendarEvent:
+        raise NotImplementedError(
+            "This calendar backend is read-only. "
+            "Creating events requires the Google Calendar API + OAuth."
+        )
+
+    def delete_event(self, event_id: str) -> None:
+        raise NotImplementedError(
+            "This calendar backend is read-only. "
+            "Deleting events requires the Google Calendar API + OAuth."
+        )
+
+============================================================
+FILE: services\combined_calendar.py
+============================================================
+
+from datetime import datetime
+
+from services.google_calendar import GoogleCalendarService
+from services.google_tasks import GoogleTasksService
+from services.google_calendar_scraper import GoogleCalendarScraperService
+
+
+class CombinedCalendarService:
+    def __init__(self):
+        self.calendar_service = GoogleCalendarService()
+        self.tasks_service = GoogleTasksService()
+        self.scraper_service = GoogleCalendarScraperService()
+
+        self.days_ahead = self.calendar_service.days_ahead
+
+    def _item_key(self, item):
+        start_time = (
+            item.start.strftime("%H:%M")
+            if isinstance(item.start, datetime)
+            else "ALL_DAY"
+        )
+
+        end_time = (
+            item.end.strftime("%H:%M")
+            if isinstance(item.end, datetime)
+            else ""
+        )
+
+        return (
+            item.summary.strip().lower(),
+            item.event_date,
+            start_time,
+            end_time,
+        )
+
+    def get_events(self, days_ahead=None):
+        days = (
+            days_ahead
+            if days_ahead is not None
+            else self.days_ahead
+        )
+
+        events = self.calendar_service.get_events(days)
+
+        try:
+            tasks = self.scraper_service.get_tasks(days)
+        except Exception as e:
+            print("Task scraper error:", e)
+            tasks = []
+
+        items = {}
+
+        # Event/iCal trÆ°á»›c
+        for event in events:
+            items[self._item_key(event)] = event
+
+        # Náº¿u scraper tĂ¬m tháº¥y cĂ¹ng item,
+        # Æ°u tiĂªn scraper vĂ¬ biáº¿t cháº¯c Ä‘Ă¢y lĂ  TASK
+        for task in tasks:
+            items[self._item_key(task)] = task
+
+        result = list(items.values())
+
+        result.sort(
+            key=lambda item: item.sort_key()
+        )
+
+        return result
+
+============================================================
+FILE: services\google_auth.py
+============================================================
+
+from pathlib import Path
+
+from google.auth.transport.requests import Request
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import InstalledAppFlow
+
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+
+CREDENTIALS_FILE = BASE_DIR / "credentials.json"
+TOKEN_FILE = BASE_DIR / "token.json"
+
+SCOPES = [
+    "https://www.googleapis.com/auth/calendar",
+    "https://www.googleapis.com/auth/tasks",
+]
+
+
+def get_google_credentials():
+    credentials = None
+
+    if TOKEN_FILE.exists():
+        credentials = Credentials.from_authorized_user_file(
+            TOKEN_FILE,
+            SCOPES,
+        )
+
+    if not credentials or not credentials.valid:
+
+        if credentials and credentials.expired and credentials.refresh_token:
+            credentials.refresh(Request())
+
+        else:
+            flow = InstalledAppFlow.from_client_secrets_file(
+                CREDENTIALS_FILE,
+                SCOPES,
+            )
+
+            credentials = flow.run_local_server(port=0)
+
+        TOKEN_FILE.write_text(
+            credentials.to_json(),
+            encoding="utf-8",
+        )
+
+    return credentials
+
+============================================================
+FILE: services\google_calendar.py
+============================================================
+
+import re
+from datetime import datetime, timedelta
+
+import recurring_ical_events
+import requests
+from icalendar import Calendar
+
+from config import load_config
+from models.calendar_event import CalendarEvent
+from services.base_calendar import BaseCalendarService
+
+def extract_url(*texts):
+    for text in texts:
+        if not text:
+            continue
+
+        match = re.search(r"https?://[^\s<>]+", str(text))
+
+        if match:
+            return match.group(0)
+
+    return ""
+
+class GoogleCalendarService(BaseCalendarService):
+    """Read-only Google Calendar service backed by a private iCal feed.
+
+    This is deliberately isolated behind BaseCalendarService. Later, it can be
+    replaced by a Google Calendar API implementation without changing the UI.
+    """
+
+    supports_write = False
+
+    def __init__(self) -> None:
+        config = load_config()
+        self.calendar_url = config.get("calendar_url")
+        self.days_ahead = int(config.get("days_ahead", 14))
+
+        if not self.calendar_url:
+            raise ValueError("calendar_url is not configured in config.json")
+
+    def _download_calendar(self) -> Calendar:
+        response = requests.get(self.calendar_url, timeout=15)
+        response.raise_for_status()
+
+        if b"BEGIN:VCALENDAR" not in response.content:
+            raise ValueError("The configured URL did not return valid iCal data.")
+
+        return Calendar.from_ical(response.content)
+
+    def get_events(self, days_ahead: int | None = None) -> list[CalendarEvent]:
+        calendar_data = self._download_calendar()
+
+        now = datetime.now().astimezone()
+        start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        days = days_ahead if days_ahead is not None else self.days_ahead
+        end = start + timedelta(days=days)
+
+        raw_events = recurring_ical_events.of(calendar_data).between(start, end)
+        events: list[CalendarEvent] = []
+
+        for raw_event in raw_events:
+            dtstart = raw_event.decoded("DTSTART")
+
+            if isinstance(dtstart, datetime):
+                if dtstart.tzinfo is None:
+                    dtstart = dtstart.replace(tzinfo=now.tzinfo)
+                dtstart = dtstart.astimezone(now.tzinfo)
+
+            dtend = None
+            if raw_event.get("DTEND") is not None:
+                dtend = raw_event.decoded("DTEND")
+                if isinstance(dtend, datetime):
+                    if dtend.tzinfo is None:
+                        dtend = dtend.replace(tzinfo=now.tzinfo)
+                    dtend = dtend.astimezone(now.tzinfo)
+
+            recurrence = []
+            rrule = raw_event.get("RRULE")
+            if rrule:
+                recurrence = [str(rrule.to_ical(), "utf-8")]
+
+            location = str(raw_event.get("LOCATION", ""))
+            description = str(raw_event.get("DESCRIPTION", ""))
+            url = str(raw_event.get("URL", ""))
+
+            if not url:
+                url = extract_url(location, description)
+
+            organizer = str(raw_event.get("ORGANIZER", ""))
+            organizer = organizer.replace("mailto:", "")
+
+            attendees = []
+
+            for attendee in raw_event.get("ATTENDEE", []):
+                attendees.append(
+                    str(attendee).replace("mailto:", "")
+                )
+
+            reminders = []
+
+            for component in raw_event.subcomponents:
+                if component.name == "VALARM":
+                    trigger = component.decoded("TRIGGER")
+
+                    if isinstance(trigger, timedelta):
+                        minutes = abs(int(trigger.total_seconds() / 60))
+
+                        if minutes < 60:
+                            reminders.append(f"{minutes} minutes before")
+                        else:
+                            reminders.append(f"{minutes // 60} hours before")
+
+            events.append(
+                CalendarEvent(
+                    event_id=str(raw_event.get("UID", "")) or None,
+                    summary=str(raw_event.get("SUMMARY", "Untitled")),
+                    start=dtstart,
+                    end=dtend,
+                    location=location,
+                    description=description,
+                    url=url,
+                    organizer=organizer,
+                    attendees=attendees,
+                    reminders=reminders,
+                    recurrence=recurrence,
+                    item_type="event",
+                )
+            )
+
+        events.sort(key=lambda event: event.sort_key())
+        return events
+
+============================================================
+FILE: services\google_calendar_scraper.py
+============================================================
+
+import re
+from datetime import datetime, timedelta
+
+from playwright.sync_api import sync_playwright
+
+from models.calendar_event import CalendarEvent
+
+
+TASK_PATTERN = re.compile(
+    r"^task:\s*(?P<title>.+),\s*"
+    r"(?P<status>Not completed|Completed),\s*"
+    r"(?P<date>[A-Za-z]+ \d{1,2}, \d{4}),\s*"
+    r"(?P<time>.+)$",
+    re.IGNORECASE,
+)
+
+
+def parse_time(value):
+    value = value.strip().upper()
+
+    return datetime.strptime(
+        value,
+        "%I:%M%p" if ":" in value else "%I%p",
+    ).time()
+
+
+class GoogleCalendarScraperService:
+
+    def get_tasks(self, days_ahead=14):
+        today = datetime.now().date()
+        end_date = today + timedelta(days=days_ahead)
+
+        results = []
+
+        with sync_playwright() as p:
+            browser = p.chromium.connect_over_cdp(
+                "http://127.0.0.1:9222"
+            )
+
+            context = browser.contexts[0]
+
+            page = next(
+                page
+                for page in context.pages
+                if "calendar.google.com" in page.url
+            )
+
+            buttons = page.locator('div[role="button"]')
+
+            for i in range(buttons.count()):
+                button = buttons.nth(i)
+
+                canonical = button.evaluate("""
+                el => {
+                    const spans = [...el.querySelectorAll("span")];
+
+                    const target = spans.find(
+                        span => span.innerText
+                            && span.innerText.trim()
+                                .toLowerCase()
+                                .startsWith("task:")
+                    );
+
+                    return target
+                        ? target.innerText.trim()
+                        : null;
+                }
+                """)
+
+                if not canonical:
+                    continue
+
+                match = TASK_PATTERN.match(canonical)
+
+                if not match:
+                    continue
+
+                title = match.group("title").strip()
+
+                task_date = datetime.strptime(
+                    match.group("date"),
+                    "%B %d, %Y",
+                ).date()
+
+                if not (today <= task_date < end_date):
+                    continue
+
+                time_text = match.group("time").strip()
+
+                if time_text.lower() == "all day":
+                    start = task_date
+                    end = None
+
+                else:
+                    parts = re.split(
+                        r"\s+to\s+",
+                        time_text,
+                        flags=re.IGNORECASE,
+                    )
+
+                    start = datetime.combine(
+                        task_date,
+                        parse_time(parts[0]),
+                    )
+
+                    end = None
+
+                    if len(parts) == 2:
+                        end = datetime.combine(
+                            task_date,
+                            parse_time(parts[1]),
+                        )
+
+                results.append(
+                    CalendarEvent(
+                        summary=title,
+                        start=start,
+                        end=end,
+                        item_type="task",
+                    )
+                )
+
+        return results
+
+============================================================
+FILE: services\google_tasks.py
+============================================================
+
+from datetime import datetime, timedelta
+
+from googleapiclient.discovery import build
+
+from models.calendar_event import CalendarEvent
+from services.google_auth import get_google_credentials
+
+
+class GoogleTasksService:
+    def __init__(self):
+        credentials = get_google_credentials()
+
+        self.service = build(
+            "tasks",
+            "v1",
+            credentials=credentials,
+        )
+
+    def get_tasks(self, days_ahead=14):
+        today = datetime.now().date()
+        end_date = today + timedelta(days=days_ahead)
+
+        items = []
+
+        task_lists = (
+            self.service.tasklists()
+            .list()
+            .execute()
+            .get("items", [])
+        )
+
+        for task_list in task_lists:
+            tasks = (
+                self.service.tasks()
+                .list(
+                    tasklist=task_list["id"],
+                    showCompleted=False,
+                    showHidden=False,
+                )
+                .execute()
+                .get("items", [])
+            )
+
+            for task in tasks:
+                due = task.get("due")
+
+                if not due:
+                    continue
+
+                due_date = datetime.fromisoformat(
+                    due.replace("Z", "+00:00")
+                ).date()
+
+                if not (today <= due_date < end_date):
+                    continue
+
+                items.append(
+                    CalendarEvent(
+                        summary=task.get("title", "Untitled task"),
+                        start=due_date,
+                        event_id=task.get("id"),
+                        description=task.get("notes", ""),
+                        item_type="task",
+                    )
+                )
+
+        return items
+
+============================================================
+FILE: services\__init__.py
+============================================================
+
+from .base_calendar import BaseCalendarService
+from .google_calendar import GoogleCalendarService
+
+__all__ = ["BaseCalendarService", "GoogleCalendarService"]
+
+============================================================
+FILE: ui\calendar_widget.py
+============================================================
+
+from PySide6.QtCore import Qt, QTimer, Slot
+from PySide6.QtWidgets import QApplication, QHBoxLayout, QWidget
+
+from controllers.calendar_controller import CalendarController
+from models.calendar_event import CalendarEvent
+from services.combined_calendar import CombinedCalendarService
+from ui.behaviors.frameless_window import FramelessWindowBehavior
+from ui.components.month_calendar import MonthCalendar
+from ui.components.upcoming_events import UpcomingEventsPanel
+from ui.styles import OUTER_CONTAINER_STYLE
+
+
+class CalendarWidget(FramelessWindowBehavior, QWidget):
+    """Top-level window.
+
+    Its job is intentionally small:
+    - configure the window
+    - compose child widgets
+    - connect controller signals
+    """
+
+    REFRESH_INTERVAL_MS = 300_000
+
+    def __init__(self) -> None:
+        super().__init__()
+
+        self.service = CombinedCalendarService()
+        self.controller = CalendarController(self.service, self)
+
+        self._setup_window()
+        self._setup_ui()
+        self._connect_signals()
+        self._setup_timer()
+        self._init_frameless_behavior()
+
+        self.controller.refresh()
+
+    def _setup_window(self) -> None:
+        self.setWindowTitle("Desktop Calendar")
+        self.setWindowFlags(
+            Qt.Window
+            | Qt.FramelessWindowHint
+            | Qt.WindowMinimizeButtonHint
+            | Qt.WindowSystemMenuHint
+        )
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.resize(850, 320)
+        self.setMinimumSize(650, 300)
+        self.setMouseTracking(True)
+
+        screen = QApplication.primaryScreen().availableGeometry()
+        self.move(
+            screen.right() - self.width() - 20,
+            screen.top() + 20,
+        )
+
+    def _setup_ui(self) -> None:
+        main_layout = QHBoxLayout(self)
+        main_layout.setContentsMargins(8, 8, 8, 8)
+        main_layout.setSpacing(0)
+
+        self.outer_container = QWidget()
+        self.outer_container.setObjectName("outerContainer")
+        self.outer_container.setStyleSheet(OUTER_CONTAINER_STYLE)
+
+        outer_layout = QHBoxLayout(self.outer_container)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+        outer_layout.setSpacing(0)
+
+        self.month_calendar = MonthCalendar()
+        self.upcoming_events = UpcomingEventsPanel(
+            days_ahead=self.service.days_ahead
+        )
+
+        outer_layout.addWidget(self.month_calendar, 1)
+        outer_layout.addWidget(self.upcoming_events, 1)
+        main_layout.addWidget(self.outer_container)
+
+    def _connect_signals(self) -> None:
+        self.controller.events_updated.connect(self._display_events)
+        self.controller.error.connect(self._handle_calendar_error)
+
+    def _setup_timer(self) -> None:
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.controller.refresh)
+        self.timer.start(self.REFRESH_INTERVAL_MS)
+
+    @Slot(list)
+    def _display_events(self, events: list[CalendarEvent]) -> None:
+        self.month_calendar.set_events(events)
+        self.upcoming_events.set_events(events)
+        self._install_mouse_tracking(self.outer_container)
+
+    @Slot(str)
+    def _handle_calendar_error(self, message: str) -> None:
+        print("Google Calendar error:", message)
+        self.month_calendar.set_events([])
+        self.upcoming_events.set_events([])
+
+============================================================
+FILE: ui\styles.py
+============================================================
+
+OUTER_CONTAINER_STYLE = """
+QWidget#outerContainer {
+    background-color: rgba(28, 27, 22, 235);
+    border-radius: 18px;
+}
+"""
+
+TRANSPARENT_PANEL_STYLE = """
+background: transparent;
+border: none;
+"""
+
+TITLE_STYLE = """
+QLabel {
+    color: white;
+    background: transparent;
+}
+"""
+
+WEEKDAY_STYLE = """
+QLabel {
+    color: #aaaaaa;
+    background: transparent;
+    font-weight: bold;
+    font-size: 11px;
+}
+"""
+
+DAY_STYLE = """
+QLabel {
+    background: transparent;
+    color: white;
+    font-size: 14px;
+}
+"""
+
+TODAY_STYLE = """
+QLabel {
+    background-color: #4285F4;
+    color: white;
+    border-radius: 15px;
+    font-weight: bold;
+    font-size: 14px;
+}
+"""
+
+EVENT_DAY_STYLE = """
+QLabel {
+    background: transparent;
+    color: #8ab4f8;
+    font-weight: bold;
+    font-size: 14px;
+}
+"""
+
+UPCOMING_TITLE_STYLE = """
+QLabel {
+    color: white;
+    background: transparent;
+    border: none;
+}
+"""
+
+EVENT_CARD_STYLE = """
+QLabel {
+    color: white;
+    background-color: rgba(255, 255, 255, 20);
+    border: none;
+    border-radius: 8px;
+    padding: 10px;
+    font-family: "Segoe UI";
+    font-size: 14px;
+    font-weight: 500;
+}
+QLabel:hover {
+    background-color: rgba(255, 255, 255, 35);
+}
+"""
+
+EMPTY_STYLE = """
+QLabel {
+    color: #AAAAAA;
+    background: transparent;
+    border: none;
+    padding: 8px;
+}
+"""
+
+SCROLL_AREA_STYLE = """
+QScrollArea {
+    background: transparent;
+    border: none;
+}
+QScrollArea > QWidget > QWidget {
+    background: transparent;
+}
+QScrollBar:vertical {
+    background: transparent;
+    width: 8px;
+    margin: 0px;
+}
+QScrollBar::handle:vertical {
+    background: rgba(255, 255, 255, 80);
+    border-radius: 4px;
+    min-height: 20px;
+}
+QScrollBar::add-line:vertical,
+QScrollBar::sub-line:vertical {
+    height: 0px;
+}
+QScrollBar::add-page:vertical,
+QScrollBar::sub-page:vertical {
+    background: transparent;
+}
+"""
+
+============================================================
+FILE: ui\__init__.py
+============================================================
+
+
+============================================================
+FILE: ui\behaviors\frameless_window.py
+============================================================
+
+from PySide6.QtCore import QEvent, Qt
+from PySide6.QtWidgets import QWidget
+
+
+class FramelessWindowBehavior:
+    """Reusable drag/resize behavior for a frameless QWidget window."""
+
+    def _init_frameless_behavior(self, resize_margin: int = 10) -> None:
+        self.resize_margin = resize_margin
+        self.resize_edges = None
+        self.resize_start_geometry = None
+        self.resize_start_mouse = None
+        self.drag_position = None
+        self._install_mouse_tracking(self)
+
+    def _install_mouse_tracking(self, widget: QWidget) -> None:
+        widget.setMouseTracking(True)
+        widget.installEventFilter(self)
+
+        for child in widget.findChildren(QWidget):
+            child.setMouseTracking(True)
+            child.installEventFilter(self)
+
+    def _get_resize_edges(self, global_pos):
+        local = self.mapFromGlobal(global_pos)
+        x, y = local.x(), local.y()
+        width, height = self.width(), self.height()
+        margin = self.resize_margin
+
+        return (
+            x <= margin,
+            x >= width - margin,
+            y <= margin,
+            y >= height - margin,
+        )
+
+    def _update_cursor(self, global_pos) -> None:
+        left, right, top, bottom = self._get_resize_edges(global_pos)
+
+        if (left and top) or (right and bottom):
+            self.setCursor(Qt.SizeFDiagCursor)
+        elif (right and top) or (left and bottom):
+            self.setCursor(Qt.SizeBDiagCursor)
+        elif left or right:
+            self.setCursor(Qt.SizeHorCursor)
+        elif top or bottom:
+            self.setCursor(Qt.SizeVerCursor)
+        else:
+            self.setCursor(Qt.ArrowCursor)
+
+    def eventFilter(self, obj, event):
+        if obj.property("interactive"):
+            return super().eventFilter(obj, event)
+        
+        if event.type() == QEvent.MouseMove:
+            global_pos = event.globalPosition().toPoint()
+
+            if event.buttons() & Qt.LeftButton and self.resize_edges:
+                self._perform_resize(global_pos)
+                return True
+
+            if (
+                event.buttons() & Qt.LeftButton
+                and self.drag_position is not None
+            ):
+                self.move(global_pos - self.drag_position)
+                return True
+
+            self._update_cursor(global_pos)
+
+        elif event.type() == QEvent.MouseButtonPress:
+            if event.button() == Qt.LeftButton:
+                global_pos = event.globalPosition().toPoint()
+                edges = self._get_resize_edges(global_pos)
+
+                if any(edges):
+                    self.resize_edges = edges
+                    self.resize_start_geometry = self.geometry()
+                    self.resize_start_mouse = global_pos
+                    return True
+
+                self.drag_position = (
+                    global_pos - self.frameGeometry().topLeft()
+                )
+                return True
+
+        elif event.type() == QEvent.MouseButtonRelease:
+            if event.button() == Qt.LeftButton:
+                self.resize_edges = None
+                self.resize_start_geometry = None
+                self.resize_start_mouse = None
+                self.drag_position = None
+                return True
+
+        return super().eventFilter(obj, event)
+
+    def _perform_resize(self, global_pos) -> None:
+        if self.resize_start_geometry is None or self.resize_edges is None:
+            return
+
+        left, right, top, bottom = self.resize_edges
+        delta = global_pos - self.resize_start_mouse
+        rect = self.resize_start_geometry
+
+        x, y = rect.x(), rect.y()
+        width, height = rect.width(), rect.height()
+        min_width, min_height = self.minimumWidth(), self.minimumHeight()
+
+        if left:
+            new_width = width - delta.x()
+            if new_width >= min_width:
+                x = rect.x() + delta.x()
+                width = new_width
+
+        if right:
+            width = max(min_width, width + delta.x())
+
+        if top:
+            new_height = height - delta.y()
+            if new_height >= min_height:
+                y = rect.y() + delta.y()
+                height = new_height
+
+        if bottom:
+            height = max(min_height, height + delta.y())
+
+        self.setGeometry(x, y, width, height)
+
+    def mouseDoubleClickEvent(self, event) -> None:
+        if event.button() == Qt.RightButton:
+            self.close()
+            return
+
+        super().mouseDoubleClickEvent(event)
+
+============================================================
+FILE: ui\behaviors\__init__.py
+============================================================
+
+from .frameless_window import FramelessWindowBehavior
+
+__all__ = ["FramelessWindowBehavior"]
+
+============================================================
+FILE: ui\components\month_calendar.py
+============================================================
+
+import calendar
+from datetime import date
+
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QFont
+from PySide6.QtWidgets import QGridLayout, QLabel, QVBoxLayout, QWidget
+
+from models.calendar_event import CalendarEvent
+from ui.styles import (
+    DAY_STYLE,
+    EVENT_DAY_STYLE,
+    TITLE_STYLE,
+    TODAY_STYLE,
+    TRANSPARENT_PANEL_STYLE,
+    WEEKDAY_STYLE,
+)
+
+
+class MonthCalendar(QWidget):
+    """Owns only the month-grid UI and event markers."""
+
+    WEEKDAYS = ("MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN")
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+
+        self._shown_year: int | None = None
+        self._shown_month: int | None = None
+        self._day_labels: dict[date, QLabel] = {}
+
+        self.setStyleSheet(TRANSPARENT_PANEL_STYLE)
+
+        self.layout = QVBoxLayout(self)
+        self.layout.setContentsMargins(20, 20, 20, 20)
+        self.layout.setSpacing(10)
+
+        self.title = QLabel()
+        self.title.setAlignment(Qt.AlignCenter)
+        self.title.setFont(QFont("Segoe UI", 19, QFont.Bold))
+        self.title.setStyleSheet(TITLE_STYLE)
+        self.layout.addWidget(self.title)
+
+        self.calendar_grid = QGridLayout()
+        self.calendar_grid.setSpacing(4)
+        self.layout.addLayout(self.calendar_grid)
+        self.layout.addStretch()
+
+        self.show_month(date.today())
+
+    def show_month(self, target_date: date) -> None:
+        if (
+            self._shown_year == target_date.year
+            and self._shown_month == target_date.month
+        ):
+            return
+
+        self._shown_year = target_date.year
+        self._shown_month = target_date.month
+        self.title.setText(target_date.strftime("%B %Y").upper())
+        self._rebuild_grid(target_date)
+
+    def set_events(self, events: list[CalendarEvent]) -> None:
+        today = date.today()
+        self.show_month(today)
+
+        event_dates = {
+            event.event_date
+            for event in events
+            if (
+                event.event_date.year == self._shown_year
+                and event.event_date.month == self._shown_month
+            )
+        }
+
+        for day_date, label in self._day_labels.items():
+            if day_date == today:
+                label.setStyleSheet(TODAY_STYLE)
+                label.setText(str(day_date.day))
+            elif day_date in event_dates:
+                label.setStyleSheet(EVENT_DAY_STYLE)
+                label.setText(f"{day_date.day} â€¢")
+            else:
+                label.setStyleSheet(DAY_STYLE)
+                label.setText(str(day_date.day))
+
+    def _rebuild_grid(self, target_date: date) -> None:
+        self._clear_grid()
+        self._day_labels.clear()
+
+        for column, day_name in enumerate(self.WEEKDAYS):
+            label = QLabel(day_name)
+            label.setAlignment(Qt.AlignCenter)
+            label.setMinimumHeight(25)
+            label.setStyleSheet(WEEKDAY_STYLE)
+            self.calendar_grid.addWidget(label, 0, column)
+
+        month_data = calendar.monthcalendar(target_date.year, target_date.month)
+
+        for row, week in enumerate(month_data, start=1):
+            for column, day_number in enumerate(week):
+                label = QLabel()
+                label.setAlignment(Qt.AlignCenter)
+                label.setMinimumSize(30, 30)
+
+                if day_number == 0:
+                    label.setStyleSheet("background: transparent;")
+                else:
+                    day_date = date(
+                        target_date.year,
+                        target_date.month,
+                        day_number,
+                    )
+                    label.setText(str(day_number))
+                    label.setStyleSheet(
+                        TODAY_STYLE if day_date == date.today() else DAY_STYLE
+                    )
+                    self._day_labels[day_date] = label
+
+                self.calendar_grid.addWidget(label, row, column)
+
+        for column in range(7):
+            self.calendar_grid.setColumnStretch(column, 1)
+
+    def _clear_grid(self) -> None:
+        while self.calendar_grid.count():
+            item = self.calendar_grid.takeAt(0)
+            widget = item.widget()
+            if widget:
+                widget.deleteLater()
+
+============================================================
+FILE: ui\components\upcoming_events.py
+============================================================
+
+from html import escape
+from PySide6.QtCore import Qt
+from datetime import date, timedelta
+
+from PySide6.QtGui import QFont
+from PySide6.QtWidgets import QLabel, QScrollArea, QVBoxLayout, QWidget
+
+from models.calendar_event import CalendarEvent
+from ui.styles import (
+    EMPTY_STYLE,
+    EVENT_CARD_STYLE,
+    SCROLL_AREA_STYLE,
+    TRANSPARENT_PANEL_STYLE,
+    UPCOMING_TITLE_STYLE,
+)
+
+
+class UpcomingEventsPanel(QWidget):
+    """Displays upcoming events and nothing else."""
+
+    def __init__(
+        self,
+        days_ahead: int = 14,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+
+        self.days_ahead = days_ahead
+        self.setStyleSheet(TRANSPARENT_PANEL_STYLE)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(10)
+
+        self.title = QLabel(self._title_text())
+        self.title.setFont(QFont("Segoe UI", 16, QFont.Bold))
+        self.title.setStyleSheet(UPCOMING_TITLE_STYLE)
+        layout.addWidget(self.title)
+
+        self.scroll = QScrollArea()
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setFrameShape(QScrollArea.NoFrame)
+        self.scroll.setStyleSheet(SCROLL_AREA_STYLE)
+
+        self.content = QWidget()
+        self.content.setStyleSheet(TRANSPARENT_PANEL_STYLE)
+
+        self.events_layout = QVBoxLayout(self.content)
+        self.events_layout.setContentsMargins(0, 0, 5, 0)
+        self.events_layout.setSpacing(6)
+
+        self.scroll.setWidget(self.content)
+        layout.addWidget(self.scroll)
+
+    def set_events(self, events: list[CalendarEvent]) -> None:
+        self._clear_events()
+
+        today = date.today()
+        end_date = today + timedelta(days=self.days_ahead)
+
+        upcoming = sorted(
+            (
+                event
+                for event in events
+                if today <= event.event_date < end_date
+            ),
+            key=lambda event: event.sort_key(),
+        )
+
+        if not upcoming:
+            empty = QLabel(
+                f"No events in the next {self.days_ahead} days"
+            )
+            empty.setStyleSheet(EMPTY_STYLE)
+            self.events_layout.addWidget(empty)
+            self.events_layout.addStretch()
+            return
+
+        for event in upcoming:
+            self.events_layout.addWidget(self._create_event_card(event))
+
+        self.events_layout.addStretch()
+
+    def _create_event_card(self, event: CalendarEvent) -> QLabel:
+        date_text = event.event_date.strftime("%a, %d %b").upper()
+        if event.item_type == "task":
+            type_text = "TASK"
+        else:
+            type_text = "EVENT"
+
+        lines = [
+            f'<span style="color:#8ab4f8;"><b>{type_text}</b></span>',
+            f"<b>{escape(date_text)}</b>",
+            f"{escape(event.time_range_text)} &nbsp;&nbsp;"
+            f"<b>{escape(event.summary)}</b>",
+        ]
+        
+        date_text = event.event_date.strftime("%a, %d %b").upper()
+
+        lines = [
+            f"<b>{escape(date_text)}</b>",
+            f"{escape(event.time_range_text)} &nbsp;&nbsp; "
+            f"<b>{escape(event.summary)}</b>",
+        ]
+
+        if event.location:
+            location = event.location
+
+            # Äá»«ng hiá»‡n nguyĂªn URL á»Ÿ location
+            if not location.startswith("http"):
+                lines.append(f"đŸ“ {escape(location)}")
+
+        if event.url:
+            display_url = event.url
+
+            if len(display_url) > 48:
+                display_url = display_url[:45] + "..."
+
+            lines.append(
+                f'đŸ”— <a href="{escape(event.url)}" '
+                f'style="color:#8ab4f8;text-decoration:none;">'
+                f'{escape(display_url)}</a>'
+            )
+
+        if event.description:
+            description = event.description
+
+            # KhĂ´ng láº·p láº¡i URL náº¿u description chá»©a link
+            if event.url:
+                description = description.replace(event.url, "")
+
+            description = description.strip()
+
+            if description:
+                lines.append(f"đŸ“ {escape(description)}")
+
+        if event.reminders:
+            lines.append(
+                "đŸ”” " + escape(", ".join(event.reminders))
+            )
+
+        if event.organizer:
+            lines.append(
+                f"đŸ‘¤ {escape(event.organizer)}"
+            )
+
+        if event.attendees:
+            lines.append(
+                "đŸ‘¥ " + escape(", ".join(event.attendees))
+            )
+
+        label = QLabel("<br>".join(lines))
+
+        label.setWordWrap(True)
+        label.setStyleSheet(EVENT_CARD_STYLE)
+
+        label.setTextFormat(Qt.RichText)
+        label.setTextInteractionFlags(Qt.TextBrowserInteraction)
+        label.setOpenExternalLinks(True)
+
+        label.setProperty("interactive", True)
+        label.setProperty("event_id", event.event_id or "")
+
+        return label
+
+    def _clear_events(self) -> None:
+        while self.events_layout.count():
+            item = self.events_layout.takeAt(0)
+            widget = item.widget()
+            if widget:
+                widget.deleteLater()
+
+    def _title_text(self) -> str:
+        if self.days_ahead == 14:
+            return "NEXT 2 WEEKS"
+        return f"NEXT {self.days_ahead} DAYS"
+
+============================================================
+FILE: ui\components\__init__.py
+============================================================
+
+from .month_calendar import MonthCalendar
+from .upcoming_events import UpcomingEventsPanel
+
+__all__ = ["MonthCalendar", "UpcomingEventsPanel"]
+
+============================================================
+FILE: utils\date_utils.py
+============================================================
+
+from datetime import date, datetime
+
+
+def month_title(value: date | None = None) -> str:
+    value = value or date.today()
+    return value.strftime("%B %Y").upper()
+
+
+def today() -> date:
+    return datetime.now().date()
+
+============================================================
+FILE: utils\__init__.py
+============================================================
+

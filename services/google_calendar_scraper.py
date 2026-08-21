@@ -4,6 +4,9 @@ from datetime import datetime, timedelta
 from playwright.sync_api import sync_playwright
 
 from models.calendar_event import CalendarEvent
+from services.chrome_calendar_session import (
+    ensure_calendar_chrome,
+)
 
 
 TASK_PATTERN = re.compile(
@@ -27,6 +30,7 @@ def parse_time(value):
 class GoogleCalendarScraperService:
 
     def get_tasks(self, days_ahead=14):
+        ensure_calendar_chrome()
         today = datetime.now().date()
         end_date = today + timedelta(days=days_ahead)
 
@@ -40,11 +44,24 @@ class GoogleCalendarScraperService:
             context = browser.contexts[0]
 
             page = next(
-                page
-                for page in context.pages
-                if "calendar.google.com" in page.url
+                (
+                    page
+                    for page in context.pages
+                    if "calendar.google.com" in page.url
+                ),
+                None,
             )
 
+            if page is None:
+                page = context.new_page()
+
+                page.goto(
+                    "https://calendar.google.com/calendar/u/0/r",
+                    wait_until="domcontentloaded",
+                )
+
+            page.wait_for_timeout(3000)
+            
             buttons = page.locator('div[role="button"]')
 
             for i in range(buttons.count()):
