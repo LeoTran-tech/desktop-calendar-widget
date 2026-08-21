@@ -1,21 +1,26 @@
+# Python
 __pycache__/
 *.py[cod]
 .venv/
 venv/
-.idea/
+
+# IDE
 .vscode/
+.idea/
 
-# Contains the private iCal URL.
+# Private calendar / OAuth configuration
 config.json
-
-# Future Google OAuth files.
 credentials.json
 token.json
 
-# Browser / scraper local data
-data/
-
-# Debug / temporary files
-task_dom_dump.json
-test_calendar_scraper.py
+# Generated context / dumps
+ai_context.txt
 project_dump.txt
+task_dom_dump.json
+
+# Local browser/cache data if ever created inside the repo
+chrome_profile/
+google_calendar_profile/
+ChromeProfile/
+calendar-debug-profile/
+cache.json

@@ -1,21 +1,22 @@
-from html import escape
 from datetime import date, timedelta
 
-from PySide6.QtCore import Qt, Signal, QPoint
+from PySide6.QtCore import QPoint, QSize, Qt, Signal
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
+    QHBoxLayout,
     QLabel,
     QScrollArea,
+    QSizePolicy,
+    QToolButton,
     QVBoxLayout,
     QWidget,
-    QHBoxLayout,
-    QToolButton,
 )
 
 from models.calendar_event import CalendarEvent
+from ui.components.event_card import EventCard
+from ui.icons import ICON_ACCENT, ICON_DANGER, ICON_PRIMARY, make_icon
 from ui.styles import (
     EMPTY_STYLE,
-    EVENT_CARD_STYLE,
     SCROLL_AREA_STYLE,
     TRANSPARENT_PANEL_STYLE,
     UPCOMING_TITLE_STYLE,
@@ -35,30 +36,87 @@ class HoverToolButton(QToolButton):
         super().leaveEvent(event)
 
 
-class UpcomingEventsPanel(QWidget):
-
-    open_google_calendar_requested = Signal()
-    lock_position_requested = Signal(bool)
-    refresh_requested = Signal()
+class IconToolButton(HoverToolButton):
+    """Tool button with a monochrome icon that turns blue on hover."""
 
     def __init__(
         self,
-        days_ahead: int = 14,
+        icon_name: str,
+        icon_size: int = 22,
+        hover_color: str = ICON_ACCENT,
+        parent=None,
+    ) -> None:
+        super().__init__(parent)
+        self._icon_name = icon_name
+        self._icon_size = icon_size
+        self._hover_color = hover_color
+        self._active = False
+        self.setIconSize(QSize(icon_size, icon_size))
+        self._apply_icon()
+
+    def set_icon_name(self, icon_name: str) -> None:
+        self._icon_name = icon_name
+        self._apply_icon()
+
+    def set_active(self, active: bool) -> None:
+        self._active = active
+        self._apply_icon()
+
+    def enterEvent(self, event):
+        self.setIcon(
+            make_icon(
+                self._icon_name,
+                self._hover_color,
+                self._icon_size,
+            )
+        )
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._apply_icon()
+        super().leaveEvent(event)
+
+    def _apply_icon(self) -> None:
+        color = ICON_ACCENT if self._active else ICON_PRIMARY
+        self.setIcon(
+            make_icon(
+                self._icon_name,
+                color,
+                self._icon_size,
+            )
+        )
+
+
+class UpcomingEventsPanel(QWidget):
+    open_google_calendar_requested = Signal()
+    lock_position_requested = Signal(bool)
+    refresh_requested = Signal()
+    upcoming_requested = Signal()
+    close_requested = Signal()
+
+    def __init__(
+        self,
+        days_ahead: int = 7,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
 
         self.days_ahead = days_ahead
         self.position_locked = True
+        self._events: list[CalendarEvent] = []
+        self._selected_date: date | None = None
 
-        self.setStyleSheet(TRANSPARENT_PANEL_STYLE)
-
-        # ============================================================
-        # MAIN LAYOUT
-        # ============================================================
+        self.setStyleSheet(
+            TRANSPARENT_PANEL_STYLE
+        )
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setContentsMargins(
+            20,
+            20,
+            20,
+            20,
+        )
         layout.setSpacing(10)
 
         # ============================================================
@@ -66,101 +124,213 @@ class UpcomingEventsPanel(QWidget):
         # ============================================================
 
         title_layout = QHBoxLayout()
-        title_layout.setContentsMargins(0, 0, 0, 0)
+        title_layout.setContentsMargins(
+            0,
+            0,
+            0,
+            0,
+        )
         title_layout.setSpacing(7)
 
-        self.title = QLabel(self._title_text())
-
-        self.title.setFont(
-            QFont("Segoe UI", 16, QFont.DemiBold)
+        self.back_button = IconToolButton(
+            "back",
+            icon_size=20,
         )
+        self.back_button.setFixedSize(
+            34,
+            34,
+        )
+        self.back_button.setCursor(
+            Qt.PointingHandCursor
+        )
+        self.back_button.setProperty(
+            "interactive",
+            True,
+        )
+        self.back_button.hide()
 
+        self.title = QLabel(
+            self._title_text()
+        )
+        self.title.setFont(
+            QFont(
+                "Segoe UI",
+                16,
+                QFont.DemiBold,
+            )
+        )
         self.title.setStyleSheet(
             UPCOMING_TITLE_STYLE
         )
+        # Keep the header title visible while still allowing it to share
+        # space with the fixed-size action buttons. Using Ignored here can
+        # collapse labels such as "NEXT 30 DAYS" to zero width.
+        self.title.setMinimumWidth(145)
+        self.title.setSizePolicy(
+            QSizePolicy.Expanding,
+            QSizePolicy.Preferred,
+        )
 
-        title_layout.addWidget(self.title)
+        title_layout.addWidget(
+            self.back_button
+        )
+        title_layout.addWidget(
+            self.title
+        )
         title_layout.addStretch()
-
-        # ============================================================
-        # BUTTON STYLE
-        # ============================================================
 
         button_style = """
         QToolButton {
-            color: white;
             background-color: rgba(255,255,255,22);
-            border: none;
+            border: 1px solid rgba(255,255,255,8);
             border-radius: 20px;
-
-            font-family: "Segoe UI";
-            font-size: 21px;
-            font-weight: 600;
         }
 
         QToolButton:hover {
-            background-color: rgba(255,255,255,42);
-            color: #8ab4f8;
+            background-color: rgba(255,255,255,38);
+            border-color: rgba(138,180,248,35);
         }
 
         QToolButton:pressed {
-            background-color: rgba(255,255,255,55);
+            background-color: rgba(255,255,255,52);
         }
         """
 
-        # ============================================================
-        # RESET POSITION
-        # ============================================================
+        close_button_style = """
+        QToolButton {
+            background-color: rgba(255,255,255,22);
+            border: 1px solid rgba(255,255,255,8);
+            border-radius: 20px;
+        }
 
-        # REFRESH
-        self.refresh_button = HoverToolButton()
-        self.refresh_button.setText("↻")
-        self.refresh_button.setFixedSize(40, 40)
-        self.refresh_button.setCursor(Qt.PointingHandCursor)
-        self.refresh_button.setStyleSheet(button_style)
-        self.refresh_button.setProperty("interactive", True)
+        QToolButton:hover {
+            background-color: rgba(220,70,70,52);
+            border-color: rgba(255,133,133,90);
+        }
 
+        QToolButton:pressed {
+            background-color: rgba(220,70,70,78);
+            border-color: rgba(255,133,133,120);
+        }
+        """
+
+        compact_button_style = """
+        QToolButton {
+            background: transparent;
+            border: none;
+            border-radius: 17px;
+        }
+
+        QToolButton:hover {
+            background-color: rgba(255,255,255,18);
+        }
+        """
+
+        self.back_button.setStyleSheet(
+            compact_button_style
+        )
+
+        self.refresh_button = IconToolButton(
+            "refresh",
+            icon_size=22,
+        )
+        self.refresh_button.setFixedSize(
+            40,
+            40,
+        )
+        self.refresh_button.setCursor(
+            Qt.PointingHandCursor
+        )
+        self.refresh_button.setStyleSheet(
+            button_style
+        )
+        self.refresh_button.setProperty(
+            "interactive",
+            True,
+        )
         self.refresh_button.clicked.connect(
             self.refresh_requested.emit
         )
 
-        # ============================================================
-        # LOCK / UNLOCK
-        # ============================================================
-
-        self.lock_button = HoverToolButton()
-        self.lock_button.setText("🔒")
-        self.lock_button.setFixedSize(40, 40)
-        self.lock_button.setCursor(Qt.PointingHandCursor)
-        self.lock_button.setStyleSheet(button_style)
-        self.lock_button.setProperty("interactive", True)
-
+        self.lock_button = IconToolButton(
+            "lock",
+            icon_size=21,
+        )
+        self.lock_button.setFixedSize(
+            40,
+            40,
+        )
+        self.lock_button.setCursor(
+            Qt.PointingHandCursor
+        )
+        self.lock_button.setStyleSheet(
+            button_style
+        )
+        self.lock_button.setProperty(
+            "interactive",
+            True,
+        )
         self.lock_button.clicked.connect(
             self._toggle_position_lock
         )
 
-        # ============================================================
-        # OPEN GOOGLE CALENDAR
-        # ============================================================
-
-        self.open_button = HoverToolButton()
-        self.open_button.setText("↗")
-        self.open_button.setFixedSize(40, 40)
-        self.open_button.setCursor(Qt.PointingHandCursor)
-        self.open_button.setStyleSheet(button_style)
-        self.open_button.setProperty("interactive", True)
-
+        self.open_button = IconToolButton(
+            "external",
+            icon_size=21,
+        )
+        self.open_button.setFixedSize(
+            40,
+            40,
+        )
+        self.open_button.setCursor(
+            Qt.PointingHandCursor
+        )
+        self.open_button.setStyleSheet(
+            button_style
+        )
+        self.open_button.setProperty(
+            "interactive",
+            True,
+        )
         self.open_button.clicked.connect(
             self.open_google_calendar_requested.emit
         )
 
-        # ============================================================
-        # ADD BUTTONS
-        # ============================================================
+        self.close_button = IconToolButton(
+            "close",
+            icon_size=20,
+            hover_color=ICON_DANGER,
+        )
+        self.close_button.setFixedSize(
+            40,
+            40,
+        )
+        self.close_button.setCursor(
+            Qt.PointingHandCursor
+        )
+        self.close_button.setStyleSheet(
+            close_button_style
+        )
+        self.close_button.setProperty(
+            "interactive",
+            True,
+        )
+        self.close_button.clicked.connect(
+            self.close_requested.emit
+        )
 
-        title_layout.addWidget(self.refresh_button)
-        title_layout.addWidget(self.lock_button)
-        title_layout.addWidget(self.open_button)
+        title_layout.addWidget(
+            self.refresh_button
+        )
+        title_layout.addWidget(
+            self.lock_button
+        )
+        title_layout.addWidget(
+            self.open_button
+        )
+        title_layout.addWidget(
+            self.close_button
+        )
 
         layout.addLayout(title_layout)
 
@@ -168,149 +338,226 @@ class UpcomingEventsPanel(QWidget):
         # CUSTOM TOOLTIP
         # ============================================================
 
-        self.control_tooltip = QLabel("", self)
+        self.control_tooltip = QLabel(
+            "",
+            self,
+        )
+        self.control_tooltip.setStyleSheet(
+            """
+            QLabel {
+                background-color: #353328;
+                color: #FFFFFF;
 
-        self.control_tooltip.setStyleSheet("""
-        QLabel {
-            background-color: #353328;
-            color: #FFFFFF;
+                border: 1px solid rgba(255,255,255,35);
+                border-radius: 7px;
 
-            border: 1px solid rgba(255,255,255,35);
-            border-radius: 7px;
+                padding: 7px 11px;
 
-            padding: 7px 11px;
-
-            font-family: "Segoe UI";
-            font-size: 13px;
-            font-weight: 500;
-        }
-        """)
-
-        self.control_tooltip.setAlignment(Qt.AlignCenter)
-
+                font-family: "Segoe UI";
+                font-size: 13px;
+                font-weight: 500;
+            }
+            """
+        )
+        self.control_tooltip.setAlignment(
+            Qt.AlignCenter
+        )
         self.control_tooltip.setAttribute(
             Qt.WA_TransparentForMouseEvents,
             True,
         )
-
         self.control_tooltip.hide()
 
-        # Refresh tooltip
+        self.back_button.clicked.connect(
+            self.upcoming_requested.emit
+        )
+        self.back_button.hover_entered.connect(
+            lambda: self._show_tooltip(
+                self.back_button,
+                "Back to upcoming",
+            )
+        )
+        self.back_button.hover_left.connect(
+            self._hide_tooltip
+        )
+
         self.refresh_button.hover_entered.connect(
             lambda: self._show_tooltip(
                 self.refresh_button,
                 "Refresh now",
             )
         )
-
         self.refresh_button.hover_left.connect(
             self._hide_tooltip
         )
 
-        # Lock tooltip
         self.lock_button.hover_entered.connect(
             self._show_lock_tooltip
         )
-
         self.lock_button.hover_left.connect(
             self._hide_tooltip
         )
 
-        # Google Calendar tooltip
         self.open_button.hover_entered.connect(
             lambda: self._show_tooltip(
                 self.open_button,
                 "Open Google Calendar",
             )
         )
-
         self.open_button.hover_left.connect(
             self._hide_tooltip
         )
 
+        self.close_button.hover_entered.connect(
+            lambda: self._show_tooltip(
+                self.close_button,
+                "Hide widget",
+            )
+        )
+        self.close_button.hover_left.connect(
+            self._hide_tooltip
+        )
+
         # ============================================================
-        # SCROLL AREA
+        # EVENT LIST
         # ============================================================
 
         self.scroll = QScrollArea()
-
         self.scroll.setWidgetResizable(True)
-        self.scroll.setFrameShape(QScrollArea.NoFrame)
-        self.scroll.setStyleSheet(SCROLL_AREA_STYLE)
+        self.scroll.setFrameShape(
+            QScrollArea.NoFrame
+        )
+        self.scroll.setStyleSheet(
+            SCROLL_AREA_STYLE
+        )
 
         self.content = QWidget()
         self.content.setStyleSheet(
             TRANSPARENT_PANEL_STYLE
         )
 
-        self.events_layout = QVBoxLayout(self.content)
-
+        self.events_layout = QVBoxLayout(
+            self.content
+        )
         self.events_layout.setContentsMargins(
             0,
             0,
             5,
             0,
         )
-
         self.events_layout.setSpacing(6)
 
-        self.scroll.setWidget(self.content)
+        self.scroll.setWidget(
+            self.content
+        )
+        layout.addWidget(
+            self.scroll
+        )
 
-        layout.addWidget(self.scroll)
+        # ============================================================
+        # SYNC STATUS
+        # ============================================================
 
         self.sync_status = QLabel("")
-        self.sync_status.setStyleSheet("""
-        QLabel {
-            color: #B8B8B8;
-            background: transparent;
-            border: none;
+        self.sync_status.setStyleSheet(
+            """
+            QLabel {
+                color: #B8B8B8;
+                background: transparent;
+                border: none;
 
-            font-family: "Segoe UI";
-            font-size: 12px;
-            font-weight: 500;
+                font-family: "Segoe UI";
+                font-size: 13px;
+                font-weight: 500;
 
-            padding: 4px 3px;
-        }
-        """)
+                padding: 4px 3px;
+            }
+            """
+        )
+        layout.addWidget(
+            self.sync_status
+        )
 
-        layout.addWidget(self.sync_status)
+
+    def ensure_header_controls_visible(self) -> None:
+        """Keep all permanent header controls visible after tray restore."""
+        self.refresh_button.show()
+        self.lock_button.show()
+        self.open_button.show()
+        self.close_button.show()
+        self.close_button.raise_()
 
     def set_sync_status(
         self,
         text: str,
         warning: bool = False,
     ) -> None:
-
-        color = "#D6B36A" if warning else "#B8B8B8"
+        color = (
+            "#D6B36A"
+            if warning
+            else "#B8B8B8"
+        )
 
         self.sync_status.setText(text)
+        self.sync_status.setStyleSheet(
+            f"""
+            QLabel {{
+                color: {color};
+                background: transparent;
+                border: none;
 
-        self.sync_status.setStyleSheet(f"""
-        QLabel {{
-            color: {color};
-            background: transparent;
-            border: none;
+                font-family: "Segoe UI";
+                font-size: 13px;
+                font-weight: 500;
 
-            font-family: "Segoe UI";
-            font-size: 12px;
-            font-weight: 500;
+                padding: 4px 3px;
+            }}
+            """
+        )
 
-            padding: 4px 3px;
-        }}
-        """)
+    def set_days_ahead(
+        self,
+        days: int,
+    ) -> None:
+        self.days_ahead = days
+        self._render()
+
+    def set_events(
+        self,
+        events: list[CalendarEvent],
+    ) -> None:
+        self._events = list(events)
+        self._render()
+
+    def show_date(
+        self,
+        selected_date: date,
+    ) -> None:
+        self._selected_date = selected_date
+        self._render()
+
+    def show_upcoming(self) -> None:
+        self._selected_date = None
+        self._render()
 
     # ================================================================
     # POSITION LOCK
     # ================================================================
 
     def _toggle_position_lock(self) -> None:
+        self.position_locked = (
+            not self.position_locked
+        )
 
-        self.position_locked = not self.position_locked
-
-        if self.position_locked:
-            self.lock_button.setText("🔒")
-        else:
-            self.lock_button.setText("🔓")
+        self.lock_button.set_icon_name(
+            "lock"
+            if self.position_locked
+            else "unlock"
+        )
+        # Blue unlocked icon communicates that reposition mode is active.
+        self.lock_button.set_active(
+            not self.position_locked
+        )
 
         self.lock_position_requested.emit(
             self.position_locked
@@ -321,7 +568,6 @@ class UpcomingEventsPanel(QWidget):
     # ================================================================
 
     def _show_lock_tooltip(self) -> None:
-
         text = (
             "Unlock position"
             if self.position_locked
@@ -338,7 +584,6 @@ class UpcomingEventsPanel(QWidget):
         button: QToolButton,
         text: str,
     ) -> None:
-
         self.control_tooltip.setText(text)
         self.control_tooltip.adjustSize()
 
@@ -348,11 +593,14 @@ class UpcomingEventsPanel(QWidget):
         )
 
         tooltip_width = (
-            self.control_tooltip.sizeHint().width()
+            self.control_tooltip
+            .sizeHint()
+            .width()
         )
-
         tooltip_height = (
-            self.control_tooltip.sizeHint().height()
+            self.control_tooltip
+            .sizeHint()
+            .height()
         )
 
         x = (
@@ -360,25 +608,28 @@ class UpcomingEventsPanel(QWidget):
             + button.width()
             - tooltip_width
         )
-
         y = (
             button_pos.y()
             + button.height()
             + 6
         )
 
-        # Không cho tooltip vượt mép trái/phải.
         x = max(0, x)
 
         if x + tooltip_width > self.width():
-            x = self.width() - tooltip_width
+            x = (
+                self.width()
+                - tooltip_width
+            )
 
         self.control_tooltip.resize(
             tooltip_width,
             tooltip_height,
         )
-
-        self.control_tooltip.move(x, y)
+        self.control_tooltip.move(
+            x,
+            y,
+        )
         self.control_tooltip.raise_()
         self.control_tooltip.show()
 
@@ -386,18 +637,28 @@ class UpcomingEventsPanel(QWidget):
         self.control_tooltip.hide()
 
     # ================================================================
-    # EVENTS
+    # RENDERING
     # ================================================================
 
-    def set_events(
-        self,
-        events: list[CalendarEvent],
-    ) -> None:
-
+    def _render(self) -> None:
         self._clear_events()
 
-        today = date.today()
+        if self._selected_date is not None:
+            self._render_selected_date()
+        else:
+            self._render_upcoming()
 
+        self.scroll.verticalScrollBar().setValue(
+            0
+        )
+
+    def _render_upcoming(self) -> None:
+        self.back_button.hide()
+        self.title.setText(
+            self._title_text()
+        )
+
+        today = date.today()
         end_date = today + timedelta(
             days=self.days_ahead
         )
@@ -405,181 +666,91 @@ class UpcomingEventsPanel(QWidget):
         upcoming = sorted(
             (
                 event
-                for event in events
-                if today <= event.event_date < end_date
+                for event in self._events
+                if (
+                    today
+                    <= event.event_date
+                    < end_date
+                )
             ),
             key=lambda event: event.sort_key(),
         )
 
         if not upcoming:
-
-            empty = QLabel(
-                f"No events in the next "
+            self._show_empty(
+                f"No events or tasks in the next "
                 f"{self.days_ahead} days"
             )
-
-            empty.setStyleSheet(EMPTY_STYLE)
-
-            self.events_layout.addWidget(empty)
-            self.events_layout.addStretch()
-
             return
 
-        for event in upcoming:
+        self._add_event_cards(
+            upcoming
+        )
 
-            self.events_layout.addWidget(
-                self._create_event_card(event)
-            )
+    def _render_selected_date(self) -> None:
+        selected_date = self._selected_date
 
-        self.events_layout.addStretch()
+        if selected_date is None:
+            return
 
-    # ================================================================
-    # EVENT CARD
-    # ================================================================
-
-    def _create_event_card(
-        self,
-        event: CalendarEvent,
-    ) -> QLabel:
-
-        date_text = (
-            event.event_date
+        self.back_button.show()
+        self.title.setText(
+            selected_date
             .strftime("%a, %d %b")
             .upper()
         )
 
-        lines = [
+        day_items = sorted(
             (
-                f'<span style="font-size:14px; font-weight:600;">'
-                f'{escape(date_text)}'
-                f'</span>'
+                event
+                for event in self._events
+                if event.event_date
+                == selected_date
             ),
-            (
-                f'<span style="font-size:13px; font-weight:400;">'
-                f'{escape(event.time_range_text)}'
-                f'</span>'
-                f' &nbsp;&nbsp; '
-                f'<span style="font-size:14px; font-weight:600;">'
-                f'{escape(event.summary)}'
-                f'</span>'
-            ),
-        ]
-
-        if event.location:
-
-            location = event.location
-
-            if not location.startswith("http"):
-                lines.append(
-                    f"📍 {escape(location)}"
-                )
-
-        if event.url:
-
-            display_url = event.url
-
-            if len(display_url) > 48:
-                display_url = (
-                    display_url[:45] + "..."
-                )
-
-            lines.append(
-                f'🔗 <a href="{escape(event.url)}" '
-                f'style="color:#8ab4f8;'
-                f'text-decoration:none;">'
-                f'{escape(display_url)}</a>'
-            )
-
-        if event.description:
-
-            description = event.description
-
-            if event.url:
-                description = description.replace(
-                    event.url,
-                    "",
-                )
-
-            description = description.strip()
-
-            if description:
-                lines.append(
-                    f"📝 {escape(description)}"
-                )
-
-        if event.reminders:
-
-            lines.append(
-                "🔔 "
-                + escape(
-                    ", ".join(event.reminders)
-                )
-            )
-
-        if event.organizer:
-
-            lines.append(
-                f"👤 {escape(event.organizer)}"
-            )
-
-        if event.attendees:
-
-            lines.append(
-                "👥 "
-                + escape(
-                    ", ".join(event.attendees)
-                )
-            )
-
-        label = QLabel(
-            "<br>".join(lines)
+            key=lambda event: event.sort_key(),
         )
 
-        label.setWordWrap(True)
-        label.setStyleSheet(EVENT_CARD_STYLE)
+        if not day_items:
+            self._show_empty(
+                "Nothing on this day"
+            )
+            return
 
-        label.setTextFormat(Qt.RichText)
-
-        label.setTextInteractionFlags(
-            Qt.TextBrowserInteraction
+        self._add_event_cards(
+            day_items
         )
 
-        label.setOpenExternalLinks(True)
+    def _add_event_cards(
+        self,
+        events: list[CalendarEvent],
+    ) -> None:
+        for event in events:
+            self.events_layout.addWidget(
+                EventCard(event)
+            )
 
-        label.setProperty(
-            "interactive",
-            True,
+        self.events_layout.addStretch()
+
+    def _show_empty(
+        self,
+        text: str,
+    ) -> None:
+        empty = QLabel(text)
+        empty.setStyleSheet(
+            EMPTY_STYLE
         )
-
-        label.setProperty(
-            "event_id",
-            event.event_id or "",
+        self.events_layout.addWidget(
+            empty
         )
-
-        return label
-
-    # ================================================================
-    # CLEAR
-    # ================================================================
+        self.events_layout.addStretch()
 
     def _clear_events(self) -> None:
-
         while self.events_layout.count():
-
             item = self.events_layout.takeAt(0)
-
             widget = item.widget()
 
             if widget:
                 widget.deleteLater()
 
-    # ================================================================
-    # TITLE
-    # ================================================================
-
     def _title_text(self) -> str:
-
-        if self.days_ahead == 14:
-            return "NEXT 2 WEEKS"
-
         return f"NEXT {self.days_ahead} DAYS"

@@ -25,7 +25,7 @@ QLabel {
 
     font-family: "Segoe UI";
     font-weight: 600;
-    font-size: 10px;
+    font-size: 12px;
 }
 """
 
@@ -51,6 +51,28 @@ EVENT_DAY_STYLE = """
 QLabel {
     background: transparent;
     color: #8ab4f8;
+    font-weight: bold;
+    font-size: 14px;
+}
+"""
+
+SELECTED_DAY_STYLE = """
+QLabel {
+    background-color: rgba(138, 180, 248, 32);
+    color: #FFFFFF;
+    border: 1px solid #8ab4f8;
+    border-radius: 15px;
+    font-weight: 600;
+    font-size: 14px;
+}
+"""
+
+SELECTED_TODAY_STYLE = """
+QLabel {
+    background-color: #4285F4;
+    color: white;
+    border: 2px solid #FFFFFF;
+    border-radius: 15px;
     font-weight: bold;
     font-size: 14px;
 }
@@ -91,6 +113,10 @@ QLabel {
     background: transparent;
     border: none;
     padding: 8px;
+
+    font-family: "Segoe UI";
+    font-size: 16px;
+    font-weight: 400;
 }
 """
 
