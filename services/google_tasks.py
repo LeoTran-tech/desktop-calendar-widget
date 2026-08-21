@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time, date
 
 from googleapiclient.discovery import build
 
@@ -65,3 +65,31 @@ class GoogleTasksService:
                 )
 
         return items
+
+    def create_task(self, task: CalendarEvent):
+        body = {
+            "title": task.summary,
+        }
+
+        if task.description:
+            body["notes"] = task.description
+
+        due = datetime.combine(
+            task.event_date,
+            time.min,
+        ).astimezone()
+
+        body["due"] = due.isoformat()
+
+        result = (
+            self.service.tasks()
+            .insert(
+                tasklist="@default",
+                body=body,
+            )
+            .execute()
+        )
+
+        task.event_id = result["id"]
+
+        return task

@@ -12,17 +12,20 @@ border: none;
 
 TITLE_STYLE = """
 QLabel {
-    color: white;
+    color: #F5F5F5;
     background: transparent;
+    font-weight: 600;
 }
 """
 
 WEEKDAY_STYLE = """
 QLabel {
-    color: #aaaaaa;
+    color: #A8A8A8;
     background: transparent;
-    font-weight: bold;
-    font-size: 11px;
+
+    font-family: "Segoe UI";
+    font-weight: 600;
+    font-size: 10px;
 }
 """
 
@@ -55,25 +58,30 @@ QLabel {
 
 UPCOMING_TITLE_STYLE = """
 QLabel {
-    color: white;
+    color: #F5F5F5;
     background: transparent;
     border: none;
+    font-weight: 600;
 }
 """
 
 EVENT_CARD_STYLE = """
 QLabel {
-    color: white;
+    color: #F1F1F1;
     background-color: rgba(255, 255, 255, 20);
+
     border: none;
     border-radius: 8px;
+
     padding: 10px;
+
     font-family: "Segoe UI";
-    font-size: 14px;
-    font-weight: 500;
+    font-size: 13px;
+    font-weight: 400;
 }
+
 QLabel:hover {
-    background-color: rgba(255, 255, 255, 35);
+    background-color: rgba(255, 255, 255, 30);
 }
 """
 

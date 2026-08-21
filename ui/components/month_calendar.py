@@ -36,7 +36,7 @@ class MonthCalendar(QWidget):
 
         self.title = QLabel()
         self.title.setAlignment(Qt.AlignCenter)
-        self.title.setFont(QFont("Segoe UI", 19, QFont.Bold))
+        self.title.setFont(QFont("Segoe UI", 18, QFont.DemiBold))
         self.title.setStyleSheet(TITLE_STYLE)
         self.layout.addWidget(self.title)
 

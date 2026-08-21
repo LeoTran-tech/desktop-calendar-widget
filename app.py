@@ -6,6 +6,7 @@ from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import QApplication
 
 from ui.calendar_widget import CalendarWidget
+from utils.windows_startup import enable_auto_start
 
 
 def create_app_icon() -> QIcon:
@@ -42,6 +43,7 @@ def main() -> None:
     except Exception:
         pass
 
+    enable_auto_start()
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
 

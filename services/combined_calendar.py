@@ -3,15 +3,15 @@ from datetime import datetime
 from services.google_calendar import GoogleCalendarService
 from services.google_tasks import GoogleTasksService
 from services.google_calendar_scraper import GoogleCalendarScraperService
-
+from services.google_calendar_api import GoogleCalendarApiService
 
 class CombinedCalendarService:
     def __init__(self):
         self.calendar_service = GoogleCalendarService()
         self.tasks_service = GoogleTasksService()
         self.scraper_service = GoogleCalendarScraperService()
-
         self.days_ahead = self.calendar_service.days_ahead
+        self.calendar_api = GoogleCalendarApiService()
 
     def _item_key(self, item):
         start_time = (
@@ -66,3 +66,9 @@ class CombinedCalendarService:
         )
 
         return result
+
+    def create_event(self, event):
+        if event.item_type == "task":
+            return self.tasks_service.create_task(event)
+
+        return self.calendar_api.create_event(event)
