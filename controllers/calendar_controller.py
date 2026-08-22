@@ -1,6 +1,12 @@
 from collections.abc import Callable
 
-from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal, Slot
+from PySide6.QtCore import (
+    QObject,
+    QRunnable,
+    QThreadPool,
+    Signal,
+    Slot,
+)
 
 from models.calendar_event import CalendarEvent
 from services.base_calendar import BaseCalendarService
@@ -13,7 +19,10 @@ class _WorkerSignals(QObject):
 
 
 class _Worker(QRunnable):
-    def __init__(self, job: Callable[[], object]) -> None:
+    def __init__(
+        self,
+        job: Callable[[], object],
+    ) -> None:
         super().__init__()
         self.job = job
         self.signals = _WorkerSignals()
@@ -22,20 +31,30 @@ class _Worker(QRunnable):
     def run(self) -> None:
         try:
             result = self.job()
+
         except Exception as exc:
-            self.signals.error.emit(str(exc))
+            self.signals.error.emit(
+                str(exc)
+            )
+
         else:
-            self.signals.result.emit(result)
+            self.signals.result.emit(
+                result
+            )
+
         finally:
             self.signals.finished.emit()
 
 
 class CalendarController(QObject):
-    """Coordinates UI and services and keeps network work off the UI thread."""
+    """Coordinates UI and services."""
 
     events_updated = Signal(list)
     error = Signal(str)
     busy_changed = Signal(bool)
+
+    # New signal for scraper health.
+    scraper_status_changed = Signal(object)
 
     def __init__(
         self,
@@ -43,8 +62,13 @@ class CalendarController(QObject):
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
+
         self.service = service
-        self.thread_pool = QThreadPool.globalInstance()
+
+        self.thread_pool = (
+            QThreadPool.globalInstance()
+        )
+
         self._busy = False
 
     @property
@@ -57,32 +81,94 @@ class CalendarController(QObject):
 
         self._set_busy(True)
 
-        worker = _Worker(self.service.get_events)
-        worker.signals.result.connect(self._on_events_loaded)
-        worker.signals.error.connect(self.error.emit)
-        worker.signals.finished.connect(self._finish_task)
-        self.thread_pool.start(worker)
+        worker = _Worker(
+            self.service.get_events
+        )
 
-    def create_event(self, event: CalendarEvent) -> None:
-        self._run_mutation(lambda: self.service.create_event(event))
+        worker.signals.result.connect(
+            self._on_events_loaded
+        )
 
-    def delete_event(self, event_id: str) -> None:
-        self._run_mutation(lambda: self.service.delete_event(event_id))
+        worker.signals.error.connect(
+            self.error.emit
+        )
 
-    def _run_mutation(self, job: Callable[[], object]) -> None:
+        worker.signals.finished.connect(
+            self._finish_task
+        )
+
+        self.thread_pool.start(
+            worker
+        )
+
+    def create_event(
+        self,
+        event: CalendarEvent,
+    ) -> None:
+        self._run_mutation(
+            lambda:
+            self.service.create_event(
+                event
+            )
+        )
+
+    def delete_event(
+        self,
+        event_id: str,
+    ) -> None:
+        self._run_mutation(
+            lambda:
+            self.service.delete_event(
+                event_id
+            )
+        )
+
+    def _run_mutation(
+        self,
+        job: Callable[[], object],
+    ) -> None:
         if self._busy:
             return
 
         self._set_busy(True)
 
         worker = _Worker(job)
-        worker.signals.error.connect(self.error.emit)
-        worker.signals.finished.connect(self._finish_mutation)
-        self.thread_pool.start(worker)
+
+        worker.signals.error.connect(
+            self.error.emit
+        )
+
+        worker.signals.finished.connect(
+            self._finish_mutation
+        )
+
+        self.thread_pool.start(
+            worker
+        )
 
     @Slot(object)
-    def _on_events_loaded(self, result: object) -> None:
-        self.events_updated.emit(list(result))
+    def _on_events_loaded(
+        self,
+        result: object,
+    ) -> None:
+        self.events_updated.emit(
+            list(result)
+        )
+
+        # Get scraper health if the current
+        # service supports it.
+        get_status = getattr(
+            self.service,
+            "get_scraper_status",
+            None,
+        )
+
+        if callable(get_status):
+            status = get_status()
+
+            self.scraper_status_changed.emit(
+                status
+            )
 
     @Slot()
     def _finish_mutation(self) -> None:
@@ -93,9 +179,15 @@ class CalendarController(QObject):
     def _finish_task(self) -> None:
         self._set_busy(False)
 
-    def _set_busy(self, value: bool) -> None:
+    def _set_busy(
+        self,
+        value: bool,
+    ) -> None:
         if self._busy == value:
             return
 
         self._busy = value
-        self.busy_changed.emit(value)
+
+        self.busy_changed.emit(
+            value
+        )
