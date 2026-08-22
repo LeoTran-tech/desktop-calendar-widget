@@ -17,6 +17,7 @@ token.json
 ai_context.txt
 project_dump.txt
 task_dom_dump.json
+export_project.ps1
 
 # Local browser/cache data if ever created inside the repo
 chrome_profile/

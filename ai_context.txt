@@ -2,7 +2,7 @@
 DESKTOP CALENDAR - AI PROJECT CONTEXT
 ============================================================
 
-Generated: 08/22/2026 00:21:07
+Generated: 08/22/2026 17:49:37
 
 ============================================================
 PRODUCT PURPOSE
@@ -107,6 +107,7 @@ PROJECT STRUCTURE
 [FILE] services\google_calendar_api.py
 [FILE] services\google_calendar_scraper.py
 [FILE] services\google_tasks.py
+[FILE] services\scraper_cache.py
 [FILE] services\__init__.py
 [DIR] ui
 [DIR]  ui\behaviors
@@ -1413,7 +1414,13 @@ FILE: controllers\calendar_controller.py
 
 from collections.abc import Callable
 
-from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal, Slot
+from PySide6.QtCore import (
+    QObject,
+    QRunnable,
+    QThreadPool,
+    Signal,
+    Slot,
+)
 
 from models.calendar_event import CalendarEvent
 from services.base_calendar import BaseCalendarService
@@ -1426,7 +1433,10 @@ class _WorkerSignals(QObject):
 
 
 class _Worker(QRunnable):
-    def __init__(self, job: Callable[[], object]) -> None:
+    def __init__(
+        self,
+        job: Callable[[], object],
+    ) -> None:
         super().__init__()
         self.job = job
         self.signals = _WorkerSignals()
@@ -1435,20 +1445,30 @@ class _Worker(QRunnable):
     def run(self) -> None:
         try:
             result = self.job()
+
         except Exception as exc:
-            self.signals.error.emit(str(exc))
+            self.signals.error.emit(
+                str(exc)
+            )
+
         else:
-            self.signals.result.emit(result)
+            self.signals.result.emit(
+                result
+            )
+
         finally:
             self.signals.finished.emit()
 
 
 class CalendarController(QObject):
-    """Coordinates UI and services and keeps network work off the UI thread."""
+    """Coordinates UI and services."""
 
     events_updated = Signal(list)
     error = Signal(str)
     busy_changed = Signal(bool)
+
+    # New signal for scraper health.
+    scraper_status_changed = Signal(object)
 
     def __init__(
         self,
@@ -1456,8 +1476,13 @@ class CalendarController(QObject):
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
+
         self.service = service
-        self.thread_pool = QThreadPool.globalInstance()
+
+        self.thread_pool = (
+            QThreadPool.globalInstance()
+        )
+
         self._busy = False
 
     @property
@@ -1470,32 +1495,94 @@ class CalendarController(QObject):
 
         self._set_busy(True)
 
-        worker = _Worker(self.service.get_events)
-        worker.signals.result.connect(self._on_events_loaded)
-        worker.signals.error.connect(self.error.emit)
-        worker.signals.finished.connect(self._finish_task)
-        self.thread_pool.start(worker)
+        worker = _Worker(
+            self.service.get_events
+        )
 
-    def create_event(self, event: CalendarEvent) -> None:
-        self._run_mutation(lambda: self.service.create_event(event))
+        worker.signals.result.connect(
+            self._on_events_loaded
+        )
 
-    def delete_event(self, event_id: str) -> None:
-        self._run_mutation(lambda: self.service.delete_event(event_id))
+        worker.signals.error.connect(
+            self.error.emit
+        )
 
-    def _run_mutation(self, job: Callable[[], object]) -> None:
+        worker.signals.finished.connect(
+            self._finish_task
+        )
+
+        self.thread_pool.start(
+            worker
+        )
+
+    def create_event(
+        self,
+        event: CalendarEvent,
+    ) -> None:
+        self._run_mutation(
+            lambda:
+            self.service.create_event(
+                event
+            )
+        )
+
+    def delete_event(
+        self,
+        event_id: str,
+    ) -> None:
+        self._run_mutation(
+            lambda:
+            self.service.delete_event(
+                event_id
+            )
+        )
+
+    def _run_mutation(
+        self,
+        job: Callable[[], object],
+    ) -> None:
         if self._busy:
             return
 
         self._set_busy(True)
 
         worker = _Worker(job)
-        worker.signals.error.connect(self.error.emit)
-        worker.signals.finished.connect(self._finish_mutation)
-        self.thread_pool.start(worker)
+
+        worker.signals.error.connect(
+            self.error.emit
+        )
+
+        worker.signals.finished.connect(
+            self._finish_mutation
+        )
+
+        self.thread_pool.start(
+            worker
+        )
 
     @Slot(object)
-    def _on_events_loaded(self, result: object) -> None:
-        self.events_updated.emit(list(result))
+    def _on_events_loaded(
+        self,
+        result: object,
+    ) -> None:
+        self.events_updated.emit(
+            list(result)
+        )
+
+        # Get scraper health if the current
+        # service supports it.
+        get_status = getattr(
+            self.service,
+            "get_scraper_status",
+            None,
+        )
+
+        if callable(get_status):
+            status = get_status()
+
+            self.scraper_status_changed.emit(
+                status
+            )
 
     @Slot()
     def _finish_mutation(self) -> None:
@@ -1506,12 +1593,18 @@ class CalendarController(QObject):
     def _finish_task(self) -> None:
         self._set_busy(False)
 
-    def _set_busy(self, value: bool) -> None:
+    def _set_busy(
+        self,
+        value: bool,
+    ) -> None:
         if self._busy == value:
             return
 
         self._busy = value
-        self.busy_changed.emit(value)
+
+        self.busy_changed.emit(
+            value
+        )
 
 ============================================================
 FILE: controllers\__init__.py
@@ -2052,9 +2145,16 @@ FILE: services\combined_calendar.py
 
 from datetime import date, datetime
 
-from services.google_calendar_api import GoogleCalendarApiService
-from services.google_calendar_scraper import GoogleCalendarScraperService
-from services.google_tasks import GoogleTasksService
+from services.scraper_cache import ScraperCache
+from services.google_calendar_api import (
+    GoogleCalendarApiService,
+)
+from services.google_calendar_scraper import (
+    GoogleCalendarScraperService,
+)
+from services.google_tasks import (
+    GoogleTasksService,
+)
 
 
 def month_start(value: date) -> date:
@@ -2075,6 +2175,7 @@ def add_months(
         - 1
         + months
     )
+
     year, month_zero = divmod(
         month_index,
         12,
@@ -2088,7 +2189,7 @@ def add_months(
 
 
 class CombinedCalendarService:
-    """Aggregates everything the widget needs for its visible date range."""
+    """Aggregates everything the widget needs."""
 
     MONTHS_BACK = 1
     MONTHS_FORWARD = 2
@@ -2097,27 +2198,37 @@ class CombinedCalendarService:
         self.tasks_service = (
             GoogleTasksService()
         )
+
         self.scraper_service = (
             GoogleCalendarScraperService()
         )
+
+        self.scraper_cache = (
+            ScraperCache()
+        )
+
         self.calendar_api = (
             GoogleCalendarApiService()
         )
+
+        self.scraper_status = "unknown"
+        self.scraper_error = None
 
     def get_events(
         self,
         days_ahead=None,
     ):
-        # The right panel still decides whether it shows 7/14/30 days.
-        # The service loads the four months needed by the left calendar:
-        # previous month + current month + next two months.
         today = datetime.now().date()
-        current_month = month_start(today)
+
+        current_month = month_start(
+            today
+        )
 
         start_date = add_months(
             current_month,
             -self.MONTHS_BACK,
         )
+
         end_date = add_months(
             current_month,
             self.MONTHS_FORWARD + 1,
@@ -2133,13 +2244,21 @@ class CombinedCalendarService:
         start_date: date,
         end_date: date,
     ):
+        # ============================================================
+        # GOOGLE CALENDAR API
+        # ============================================================
+
         events = (
             self.calendar_api
             .get_events_between(
                 start_date,
                 end_date,
             )
-)
+        )
+
+        # ============================================================
+        # GOOGLE TASKS API
+        # ============================================================
 
         try:
             api_tasks = (
@@ -2149,35 +2268,53 @@ class CombinedCalendarService:
                     end_date,
                 )
             )
+
         except Exception as exc:
             print(
                 "Google Tasks API error:",
-                exc,
+                repr(exc),
             )
+
             api_tasks = []
+
+        # ============================================================
+        # GOOGLE CALENDAR SCRAPER
+        # ============================================================
 
         try:
             scraped_tasks = (
-                self.scraper_service
-                .get_tasks_between(
+                self._get_scraper_tasks_safely(
                     start_date,
                     end_date,
                 )
             )
 
-            for task in scraped_tasks:
-                print(
-                    "SCRAPED:",
-                    task.summary,
-                    task.start,
-                )
-
         except Exception as exc:
+            self.scraper_status = "cached"
+            self.scraper_error = str(exc)
+
             print(
                 "Task scraper error:",
                 repr(exc),
             )
-            scraped_tasks = []
+
+            scraped_tasks = (
+                self._get_cached_tasks_between(
+                    start_date,
+                    end_date,
+                )
+            )
+
+            print(
+                "Using last-known-good "
+                "scraper cache:",
+                len(scraped_tasks),
+                "tasks",
+            )
+
+        # ============================================================
+        # MERGE SOURCES
+        # ============================================================
 
         items = {}
 
@@ -2186,14 +2323,15 @@ class CombinedCalendarService:
                 self._item_key(event)
             ] = event
 
-        # API task first: this gives us coverage, including previous-month
-        # completed tasks. The scraper then replaces matching task/date pairs
-        # when it has richer time information from Calendar's UI.
+        # Tasks API first.
         for task in api_tasks:
             items[
                 self._item_key(task)
             ] = task
 
+        # Scraper/cache last because it may
+        # contain recurring occurrences and
+        # richer Calendar UI information.
         for task in scraped_tasks:
             items[
                 self._item_key(task)
@@ -2202,16 +2340,203 @@ class CombinedCalendarService:
         result = list(
             items.values()
         )
+
         result.sort(
-            key=lambda item: item.sort_key()
+            key=lambda item: (
+                item.sort_key()
+            )
         )
+
         return result
 
-    def _item_key(self, item):
+    # ================================================================
+    # SCRAPER RELIABILITY
+    # ================================================================
+
+    def _get_scraper_tasks_safely(
+        self,
+        start_date: date,
+        end_date: date,
+    ):
+        cached_tasks = (
+            self._get_cached_tasks_between(
+                start_date,
+                end_date,
+            )
+        )
+
+        # First normal scrape.
+        scraped_tasks = (
+            self.scraper_service
+            .get_tasks_between(
+                start_date,
+                end_date,
+            )
+        )
+
+        # ------------------------------------------------------------
+        # Normal case: scraper found tasks.
+        # ------------------------------------------------------------
+
+        if scraped_tasks:
+            self._accept_scraper_result(
+                scraped_tasks
+            )
+
+            return scraped_tasks
+
+        # ------------------------------------------------------------
+        # Empty result is perfectly valid if the
+        # previous cache for the same range was
+        # also empty.
+        # ------------------------------------------------------------
+
+        if not cached_tasks:
+            self._accept_scraper_result(
+                scraped_tasks
+            )
+
+            return scraped_tasks
+
+        # ------------------------------------------------------------
+        # Suspicious case:
+        #
+        # Previous known-good scraper data had
+        # tasks, but fresh scrape suddenly found
+        # absolutely nothing.
+        #
+        # Do not trust it immediately.
+        # ------------------------------------------------------------
+
+        print(
+            "SCRAPER ANOMALY: fresh result "
+            "contains 0 tasks but cache has",
+            len(cached_tasks),
+            "tasks. Retrying...",
+        )
+
+        # Second independent scrape.
+        retry_tasks = (
+            self.scraper_service
+            .get_tasks_between(
+                start_date,
+                end_date,
+            )
+        )
+
+        # If retry finds something, the first
+        # zero was probably a transient render
+        # problem.
+        if retry_tasks:
+            print(
+                "SCRAPER ANOMALY RECOVERED:",
+                len(retry_tasks),
+                "tasks found on retry.",
+            )
+
+            self._accept_scraper_result(
+                retry_tasks
+            )
+
+            return retry_tasks
+
+        # Both attempts returned zero while
+        # known-good cache contains data.
+        #
+        # We cannot prove whether the user really
+        # deleted every task or Google changed the
+        # UI, so protect known-good data and warn.
+        reason = (
+            "Scraper returned 0 tasks twice, "
+            "but last-known-good cache contains "
+            f"{len(cached_tasks)} tasks. "
+            "Fresh empty data was not trusted."
+        )
+
+        try:
+            self.scraper_service.save_diagnostics_between(
+                start_date,
+                end_date,
+                reason,
+            )
+        except Exception as diagnostic_exc:
+            print(
+                "Could not save anomaly diagnostic:",
+                repr(diagnostic_exc),
+            )
+
+        raise RuntimeError(reason)
+
+    def _accept_scraper_result(
+        self,
+        scraped_tasks,
+    ) -> None:
+        self.scraper_cache.save(
+            scraped_tasks
+        )
+
+        self.scraper_status = (
+            "healthy"
+        )
+
+        self.scraper_error = None
+
+        print(
+            "Scraper successful. "
+            "Cache updated:",
+            len(scraped_tasks),
+            "tasks",
+        )
+
+    def _get_cached_tasks_between(
+        self,
+        start_date: date,
+        end_date: date,
+    ):
+        cached_tasks = (
+            self.scraper_cache.load()
+        )
+
+        return self._filter_tasks_between(
+            cached_tasks,
+            start_date,
+            end_date,
+        )
+
+    # ================================================================
+    # FILTERING
+    # ================================================================
+
+    def _filter_tasks_between(
+        self,
+        tasks,
+        start_date: date,
+        end_date: date,
+    ):
+        return [
+            task
+            for task in tasks
+            if (
+                start_date
+                <= task.event_date
+                < end_date
+            )
+        ]
+
+    # ================================================================
+    # MERGE KEYS
+    # ================================================================
+
+    def _item_key(
+        self,
+        item,
+    ):
         if item.item_type == "task":
             return (
                 "task",
-                item.summary.strip().lower(),
+                item.summary
+                .strip()
+                .lower(),
                 item.event_date,
             )
 
@@ -2223,32 +2548,68 @@ class CombinedCalendarService:
             )
 
         start_time = (
-            item.start.strftime("%H:%M")
-            if isinstance(item.start, datetime)
+            item.start.strftime(
+                "%H:%M"
+            )
+            if isinstance(
+                item.start,
+                datetime,
+            )
             else "ALL_DAY"
         )
+
         end_time = (
-            item.end.strftime("%H:%M")
-            if isinstance(item.end, datetime)
+            item.end.strftime(
+                "%H:%M"
+            )
+            if isinstance(
+                item.end,
+                datetime,
+            )
             else ""
         )
 
         return (
             "event",
-            item.summary.strip().lower(),
+            item.summary
+            .strip()
+            .lower(),
             item.event_date,
             start_time,
             end_time,
         )
 
-    def create_event(self, event):
+    # ================================================================
+    # STATUS
+    # ================================================================
+
+    def get_scraper_status(
+        self,
+    ):
+        return {
+            "status":
+                self.scraper_status,
+            "error":
+                self.scraper_error,
+        }
+
+    # ================================================================
+    # CREATE EVENT
+    # ================================================================
+
+    def create_event(
+        self,
+        event,
+    ):
         if event.item_type == "task":
-            return self.tasks_service.create_task(
-                event
+            return (
+                self.tasks_service
+                .create_task(event)
             )
 
-        return self.calendar_api.create_event(
-            event
+        return (
+            self.calendar_api
+            .create_event(event)
         )
 
 ============================================================
@@ -3071,8 +3432,12 @@ class GoogleCalendarApiService:
 FILE: services\google_calendar_scraper.py
 ============================================================
 
+import json
+import os
 import re
+
 from datetime import date, datetime
+from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
@@ -3095,6 +3460,12 @@ CALENDAR_URL = (
 )
 
 
+class ScraperStructureError(RuntimeError):
+    """Raised when Google Calendar's task structure looks incompatible."""
+
+    pass
+
+
 def parse_time(value: str):
     normalized = (
         value.strip()
@@ -3104,9 +3475,11 @@ def parse_time(value: str):
 
     return datetime.strptime(
         normalized,
-        "%I:%M%p"
-        if ":" in normalized
-        else "%I%p",
+        (
+            "%I:%M%p"
+            if ":" in normalized
+            else "%I%p"
+        ),
     ).time()
 
 
@@ -3128,6 +3501,7 @@ def add_months(
         - 1
         + months
     )
+
     year, month_zero = divmod(
         month_index,
         12,
@@ -3144,6 +3518,7 @@ class GoogleCalendarScraperService:
     """Reads task cards from the Google Calendar month UI."""
 
     PAGE_SETTLE_MS = 2200
+    MAX_ATTEMPTS = 2
 
     def get_tasks(
         self,
@@ -3165,6 +3540,7 @@ class GoogleCalendarScraperService:
         start_date: date,
         end_date: date,
     ) -> list[CalendarEvent]:
+
         if end_date <= start_date:
             return []
 
@@ -3178,6 +3554,7 @@ class GoogleCalendarScraperService:
         first_month = month_start(
             start_date
         )
+
         last_month = month_start(
             end_date
         )
@@ -3189,9 +3566,11 @@ class GoogleCalendarScraperService:
             )
 
         with sync_playwright() as p:
-            browser = p.chromium.connect_over_cdp(
-                "http://127.0.0.1:9222",
-                timeout=30_000,
+            browser = (
+                p.chromium.connect_over_cdp(
+                    "http://127.0.0.1:9222",
+                    timeout=10_000,
+                )
             )
 
             context = browser.contexts[0]
@@ -3213,30 +3592,260 @@ class GoogleCalendarScraperService:
             current_month = first_month
 
             try:
-                while current_month <= last_month:
-                    self._open_month(
-                        page,
-                        current_month,
+                while (
+                    current_month
+                    <= last_month
+                ):
+                    scraped_tasks = (
+                        self._scrape_month_with_retry(
+                            page,
+                            current_month,
+                            start_date,
+                            end_date,
+                        )
                     )
 
-                    if "accounts.google.com" in page.url:
-                        raise RuntimeError(
-                            "Google Calendar browser is not signed in. "
-                            "Open Settings and sign in to Google Calendar."
-                        )
-
-                    for task in self._scrape_visible_tasks(
-                        page,
-                        start_date,
-                        end_date,
-                    ):
+                    for task in scraped_tasks:
                         key = (
                             task.summary
                             .strip()
                             .lower(),
                             task.event_date,
                         )
+
                         results[key] = task
+
+                    current_month = (
+                        add_months(
+                            current_month,
+                            1,
+                        )
+                    )
+
+            finally:
+                today = (
+                    datetime.now()
+                    .date()
+                )
+
+                try:
+                    self._open_month(
+                        page,
+                        month_start(
+                            today
+                        ),
+                        wait=False,
+                    )
+
+                except Exception:
+                    pass
+
+        output = list(
+            results.values()
+        )
+
+        output.sort(
+            key=lambda item:
+                item.sort_key()
+        )
+
+        return output
+
+    def _scrape_month_with_retry(
+        self,
+        page,
+        current_month: date,
+        start_date: date,
+        end_date: date,
+    ) -> list[CalendarEvent]:
+
+        last_health = None
+
+        for attempt in range(
+            1,
+            self.MAX_ATTEMPTS + 1,
+        ):
+            try:
+                self._open_month(
+                    page,
+                    current_month,
+                )
+
+                if (
+                    "accounts.google.com"
+                    in page.url
+                ):
+                    raise RuntimeError(
+                        "Google Calendar browser "
+                        "is not signed in. "
+                        "Open Settings and sign in "
+                        "to Google Calendar."
+                    )
+
+                (
+                    scraped_tasks,
+                    health,
+                ) = (
+                    self._scrape_visible_tasks(
+                        page,
+                        start_date,
+                        end_date,
+                    )
+                )
+
+                last_health = health
+
+                # Google still exposes something
+                # beginning with "task:", but the
+                # text no longer follows the format
+                # understood by TASK_PATTERN.
+                if (
+                    health[
+                        "parse_failures"
+                    ]
+                    > 0
+                ):
+                    raise (
+                        ScraperStructureError(
+                            "Task accessibility "
+                            "text was found but "
+                            "its format could not "
+                            "be parsed."
+                        )
+                    )
+
+                return scraped_tasks
+
+            except (
+                ScraperStructureError
+            ) as exc:
+
+                print(
+                    f"SCRAPER WARNING "
+                    f"{current_month:%Y-%m} "
+                    f"attempt "
+                    f"{attempt}/"
+                    f"{self.MAX_ATTEMPTS}:",
+                    exc,
+                )
+
+                # Only create the diagnostic
+                # snapshot if the retry also
+                # failed.
+                if (
+                    attempt
+                    == self.MAX_ATTEMPTS
+                ):
+                    self._save_diagnostic_snapshot(
+                        page=page,
+                        current_month=current_month,
+                        reason=str(exc),
+                        health=last_health,
+                    )
+
+                    raise
+
+                # Give transient rendering
+                # problems one more chance.
+                page.reload(
+                    wait_until=(
+                        "domcontentloaded"
+                    ),
+                    timeout=15_000,
+                )
+
+                page.wait_for_timeout(
+                    2500
+                )
+
+        return []
+    
+    def save_diagnostics_between(
+        self,
+        start_date: date,
+        end_date: date,
+        reason: str,
+    ) -> None:
+        """Save diagnostics for every month in a suspicious range."""
+
+        if end_date <= start_date:
+            return
+
+        ensure_calendar_chrome()
+
+        first_month = month_start(
+            start_date
+        )
+
+        last_month = month_start(
+            end_date
+        )
+
+        if end_date.day == 1:
+            last_month = add_months(
+                last_month,
+                -1,
+            )
+
+        with sync_playwright() as p:
+            browser = (
+                p.chromium.connect_over_cdp(
+                    "http://127.0.0.1:9222",
+                    timeout=10_000,
+                )
+            )
+
+            context = browser.contexts[0]
+
+            page = next(
+                (
+                    existing_page
+                    for existing_page
+                    in context.pages
+                    if "calendar.google.com"
+                    in existing_page.url
+                ),
+                None,
+            )
+
+            if page is None:
+                page = context.new_page()
+
+            current_month = first_month
+
+            try:
+                while (
+                    current_month
+                    <= last_month
+                ):
+                    health = None
+
+                    try:
+                        self._open_month(
+                            page,
+                            current_month,
+                        )
+
+                        _, health = (
+                            self._scrape_visible_tasks(
+                                page,
+                                start_date,
+                                end_date,
+                            )
+                        )
+
+                    except Exception as exc:
+                        health = {
+                            "diagnostic_error":
+                                repr(exc),
+                        }
+
+                    self._save_diagnostic_snapshot(
+                        page=page,
+                        current_month=current_month,
+                        reason=reason,
+                        health=health,
+                    )
 
                     current_month = add_months(
                         current_month,
@@ -3255,13 +3864,212 @@ class GoogleCalendarScraperService:
                 except Exception:
                     pass
 
-        output = list(
-            results.values()
-        )
-        output.sort(
-            key=lambda item: item.sort_key()
-        )
-        return output
+    def _save_diagnostic_snapshot(
+        self,
+        page,
+        current_month: date,
+        reason: str,
+        health: dict | None,
+    ) -> None:
+        """
+        Save a local diagnostic file when the
+        scraper detects an incompatible Google
+        Calendar task structure.
+        """
+
+        try:
+            diagnostic_nodes = []
+
+            buttons = page.locator(
+                'div[role="button"]'
+            )
+
+            total_buttons = (
+                buttons.count()
+            )
+
+            for index in range(
+                total_buttons
+            ):
+                button = buttons.nth(
+                    index
+                )
+
+                try:
+                    information = (
+                        button.evaluate(
+                            """
+                            el => {
+                                const spans = [
+                                    ...el.querySelectorAll(
+                                        "span"
+                                    )
+                                ];
+
+                                const taskSpan =
+                                    spans.find(
+                                        span =>
+                                            span.innerText
+                                            &&
+                                            span.innerText
+                                                .trim()
+                                                .toLowerCase()
+                                                .startsWith(
+                                                    "task:"
+                                                )
+                                    );
+
+                                if (!taskSpan) {
+                                    return null;
+                                }
+
+                                const attrs = {};
+
+                                for (
+                                    const attr
+                                    of el.attributes
+                                ) {
+                                    attrs[
+                                        attr.name
+                                    ] = attr.value;
+                                }
+
+                                return {
+                                    canonical_text:
+                                        taskSpan
+                                            .innerText
+                                            .trim(),
+
+                                    attributes:
+                                        attrs,
+
+                                    outer_html:
+                                        el.outerHTML,
+
+                                    parent_html:
+                                        el.parentElement
+                                            ? el
+                                                .parentElement
+                                                .outerHTML
+                                            : null
+                                };
+                            }
+                            """
+                        )
+                    )
+
+                    if not information:
+                        continue
+
+                    try:
+                        aria_snapshot = (
+                            button
+                            .aria_snapshot()
+                        )
+
+                    except Exception as exc:
+                        aria_snapshot = (
+                            "ARIA snapshot "
+                            "failed: "
+                            f"{exc}"
+                        )
+
+                    information[
+                        "index"
+                    ] = index
+
+                    information[
+                        "aria_snapshot"
+                    ] = aria_snapshot
+
+                    diagnostic_nodes.append(
+                        information
+                    )
+
+                except Exception as exc:
+                    diagnostic_nodes.append(
+                        {
+                            "index": index,
+                            "inspection_error":
+                                repr(exc),
+                        }
+                    )
+
+            snapshot = {
+                "created_at": (
+                    datetime.now()
+                    .astimezone()
+                    .isoformat()
+                ),
+                "reason": reason,
+                "url": page.url,
+                "month": (
+                    current_month
+                    .isoformat()
+                ),
+                "health": health,
+                "total_role_buttons":
+                    total_buttons,
+                "task_nodes":
+                    diagnostic_nodes,
+                "page_html_sample": page.locator(
+                    "body"
+                ).inner_text()[:10000],
+            }
+
+            output_dir = (
+                Path(
+                    os.environ[
+                        "LOCALAPPDATA"
+                    ]
+                )
+                / "DesktopCalendar"
+                / "Diagnostics"
+            )
+
+            output_dir.mkdir(
+                parents=True,
+                exist_ok=True,
+            )
+
+            timestamp = (
+                datetime.now()
+                .strftime(
+                    "%Y%m%d_%H%M%S"
+                )
+            )
+
+            output_file = (
+                output_dir
+                / (
+                    "scraper_failure_"
+                    f"{current_month:%Y_%m}_"
+                    f"{timestamp}.json"
+                )
+            )
+
+            output_file.write_text(
+                json.dumps(
+                    snapshot,
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+
+            print(
+                "SCRAPER DIAGNOSTIC SAVED:",
+                output_file,
+            )
+
+        except Exception as exc:
+            # Diagnostic generation itself
+            # must never crash the application.
+            print(
+                "Could not save scraper "
+                "diagnostic:",
+                repr(exc),
+            )
 
     def _open_month(
         self,
@@ -3269,6 +4077,7 @@ class GoogleCalendarScraperService:
         target_month: date,
         wait: bool = True,
     ) -> None:
+
         url = (
             f"{CALENDAR_URL}/month/"
             f"{target_month.year}/"
@@ -3277,7 +4086,9 @@ class GoogleCalendarScraperService:
 
         page.goto(
             url,
-            wait_until="domcontentloaded",
+            wait_until=(
+                "domcontentloaded"
+            ),
             timeout=10_000,
         )
 
@@ -3291,8 +4102,32 @@ class GoogleCalendarScraperService:
         page,
         start_date: date,
         end_date: date,
-    ) -> list[CalendarEvent]:
-        results: list[CalendarEvent] = []
+    ) -> tuple[
+        list[CalendarEvent],
+        dict[str, int],
+    ]:
+
+        results: list[
+            CalendarEvent
+        ] = []
+
+        # Diagnostic-only signal.
+        # Do NOT treat zero containers as
+        # scraper failure because Google uses
+        # different DOM variants.
+        task_containers = (
+            page.locator(
+                '[data-eventchip]'
+                '[data-eventid^="tasks_"]'
+            )
+        )
+
+        container_count = (
+            task_containers.count()
+        )
+
+        candidate_count = 0
+        parse_failure_count = 0
 
         buttons = page.locator(
             'div[role="button"]'
@@ -3306,44 +4141,64 @@ class GoogleCalendarScraperService:
             )
 
             try:
-                canonical = button.evaluate(
-                    """
-                    el => {
-                        const spans = [
-                            ...el.querySelectorAll("span")
-                        ];
+                canonical = (
+                    button.evaluate(
+                        """
+                        el => {
+                            const spans = [
+                                ...el.querySelectorAll(
+                                    "span"
+                                )
+                            ];
 
-                        const target = spans.find(
-                            span => span.innerText
-                                && span.innerText
+                            const target =
+                                spans.find(
+                                    span =>
+                                        span.innerText
+                                        &&
+                                        span.innerText
+                                            .trim()
+                                            .toLowerCase()
+                                            .startsWith(
+                                                "task:"
+                                            )
+                                );
+
+                            return target
+                                ? target
+                                    .innerText
                                     .trim()
-                                    .toLowerCase()
-                                    .startsWith("task:")
-                        );
-
-                        return target
-                            ? target.innerText.trim()
-                            : null;
-                    }
-                    """
+                                : null;
+                        }
+                        """
+                    )
                 )
+
             except Exception:
                 continue
 
             if not canonical:
                 continue
 
+            candidate_count += 1
+
             match = TASK_PATTERN.match(
                 canonical
             )
 
             if not match:
+                parse_failure_count += 1
                 continue
 
-            task_date = datetime.strptime(
-                match.group("date"),
-                "%B %d, %Y",
-            ).date()
+            task_date = (
+                datetime.strptime(
+                    match.group(
+                        "date"
+                    ),
+                    "%B %d, %Y",
+                )
+                .date()
+            )
 
             if not (
                 start_date
@@ -3352,17 +4207,27 @@ class GoogleCalendarScraperService:
             ):
                 continue
 
-            title = match.group(
-                "title"
-            ).strip()
+            title = (
+                match.group(
+                    "title"
+                )
+                .strip()
+            )
 
-            time_text = match.group(
-                "time"
-            ).strip()
+            time_text = (
+                match.group(
+                    "time"
+                )
+                .strip()
+            )
 
-            if time_text.lower() == "all day":
+            if (
+                time_text.lower()
+                == "all day"
+            ):
                 start = task_date
                 end = None
+
             else:
                 parts = re.split(
                     r"\s+to\s+",
@@ -3370,20 +4235,25 @@ class GoogleCalendarScraperService:
                     flags=re.IGNORECASE,
                 )
 
-                start = datetime.combine(
-                    task_date,
-                    parse_time(
-                        parts[0]
-                    ),
+                start = (
+                    datetime.combine(
+                        task_date,
+                        parse_time(
+                            parts[0]
+                        ),
+                    )
                 )
+
                 end = None
 
                 if len(parts) == 2:
-                    end = datetime.combine(
-                        task_date,
-                        parse_time(
-                            parts[1]
-                        ),
+                    end = (
+                        datetime.combine(
+                            task_date,
+                            parse_time(
+                                parts[1]
+                            ),
+                        )
                     )
 
             results.append(
@@ -3395,7 +4265,18 @@ class GoogleCalendarScraperService:
                 )
             )
 
-        return results
+        health = {
+            "task_containers":
+                container_count,
+            "task_candidates":
+                candidate_count,
+            "parsed_tasks":
+                len(results),
+            "parse_failures":
+                parse_failure_count,
+        }
+
+        return results, health
 
 ============================================================
 FILE: services\google_tasks.py
@@ -3597,6 +4478,274 @@ class GoogleTasksService:
         return task
 
 ============================================================
+FILE: services\scraper_cache.py
+============================================================
+
+import json
+import os
+
+from datetime import date, datetime
+from pathlib import Path
+
+from models.calendar_event import CalendarEvent
+
+
+APP_DATA_DIR = (
+    Path(os.environ["LOCALAPPDATA"])
+    / "DesktopCalendar"
+)
+
+CACHE_FILE = (
+    APP_DATA_DIR
+    / "scraper_cache.json"
+)
+
+TEMP_CACHE_FILE = (
+    APP_DATA_DIR
+    / "scraper_cache.tmp"
+)
+
+
+class ScraperCache:
+    def save(
+        self,
+        tasks: list[CalendarEvent],
+    ) -> None:
+        APP_DATA_DIR.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        data = {
+            "updated_at": (
+                datetime.now()
+                .astimezone()
+                .isoformat()
+            ),
+            "tasks": [
+                self._serialize(task)
+                for task in tasks
+            ],
+        }
+
+        serialized = json.dumps(
+            data,
+            indent=2,
+            ensure_ascii=False,
+        )
+
+        try:
+            # Write everything to a temporary
+            # file first.
+            with TEMP_CACHE_FILE.open(
+                "w",
+                encoding="utf-8",
+            ) as file:
+                file.write(
+                    serialized
+                )
+
+                # Make Python flush its buffer.
+                file.flush()
+
+                # Ask the OS to flush the file
+                # to disk before replacing the
+                # known-good cache.
+                os.fsync(
+                    file.fileno()
+                )
+
+            # Atomic replacement.
+            # The old cache stays untouched until
+            # the new file has been fully written.
+            os.replace(
+                TEMP_CACHE_FILE,
+                CACHE_FILE,
+            )
+
+        except Exception:
+            # Never leave a broken temp file
+            # behind.
+            try:
+                if TEMP_CACHE_FILE.exists():
+                    TEMP_CACHE_FILE.unlink()
+            except Exception:
+                pass
+
+            raise
+
+    def load(
+        self,
+    ) -> list[CalendarEvent]:
+        if not CACHE_FILE.exists():
+            return []
+
+        try:
+            data = json.loads(
+                CACHE_FILE.read_text(
+                    encoding="utf-8"
+                )
+            )
+
+            return [
+                self._deserialize(item)
+                for item in data.get(
+                    "tasks",
+                    [],
+                )
+            ]
+
+        except Exception as exc:
+            print(
+                "Scraper cache error:",
+                repr(exc),
+            )
+
+            return []
+
+    def _serialize(
+        self,
+        task: CalendarEvent,
+    ) -> dict:
+        return {
+            "summary":
+                task.summary,
+
+            "start":
+                task.start.isoformat(),
+
+            "start_is_datetime":
+                isinstance(
+                    task.start,
+                    datetime,
+                ),
+
+            "end": (
+                task.end.isoformat()
+                if task.end
+                else None
+            ),
+
+            "end_is_datetime":
+                isinstance(
+                    task.end,
+                    datetime,
+                ),
+
+            "event_id":
+                task.event_id,
+
+            "location":
+                task.location,
+
+            "description":
+                task.description,
+
+            "recurrence":
+                task.recurrence,
+
+            "url":
+                task.url,
+
+            "organizer":
+                task.organizer,
+
+            "attendees":
+                task.attendees,
+
+            "reminders":
+                task.reminders,
+
+            "item_type":
+                task.item_type,
+        }
+
+    def _deserialize(
+        self,
+        item: dict,
+    ) -> CalendarEvent:
+
+        start = (
+            datetime.fromisoformat(
+                item["start"]
+            )
+            if item.get(
+                "start_is_datetime"
+            )
+            else date.fromisoformat(
+                item["start"]
+            )
+        )
+
+        end = None
+
+        if item.get("end"):
+            end = (
+                datetime.fromisoformat(
+                    item["end"]
+                )
+                if item.get(
+                    "end_is_datetime"
+                )
+                else date.fromisoformat(
+                    item["end"]
+                )
+            )
+
+        return CalendarEvent(
+            summary=item[
+                "summary"
+            ],
+
+            start=start,
+            end=end,
+
+            event_id=item.get(
+                "event_id"
+            ),
+
+            location=item.get(
+                "location",
+                "",
+            ),
+
+            description=item.get(
+                "description",
+                "",
+            ),
+
+            recurrence=item.get(
+                "recurrence",
+                [],
+            ),
+
+            url=item.get(
+                "url",
+                "",
+            ),
+
+            organizer=item.get(
+                "organizer",
+                "",
+            ),
+
+            attendees=item.get(
+                "attendees",
+                [],
+            ),
+
+            reminders=item.get(
+                "reminders",
+                [],
+            ),
+
+            item_type=item.get(
+                "item_type",
+                "task",
+            ),
+        )
+
+============================================================
 FILE: services\__init__.py
 ============================================================
 
@@ -3611,8 +4760,18 @@ FILE: ui\calendar_widget.py
 
 from datetime import date, datetime
 
-from PySide6.QtCore import QTimer, Qt, QUrl, Signal, Slot
-from PySide6.QtGui import QDesktopServices, QHideEvent, QShowEvent
+from PySide6.QtCore import (
+    QTimer,
+    Qt,
+    QUrl,
+    Signal,
+    Slot,
+)
+from PySide6.QtGui import (
+    QDesktopServices,
+    QHideEvent,
+    QShowEvent,
+)
 from PySide6.QtWidgets import (
     QDialog,
     QHBoxLayout,
@@ -3623,10 +4782,16 @@ from controllers.calendar_controller import CalendarController
 from models.calendar_event import CalendarEvent
 from services.combined_calendar import CombinedCalendarService
 from services.event_cache import EventCache
-from ui.behaviors.frameless_window import FramelessWindowBehavior
-from ui.behaviors.window_position import WindowPositionManager
+from ui.behaviors.frameless_window import (
+    FramelessWindowBehavior,
+)
+from ui.behaviors.window_position import (
+    WindowPositionManager,
+)
 from ui.components.month_calendar import MonthCalendar
-from ui.components.upcoming_events import UpcomingEventsPanel
+from ui.components.upcoming_events import (
+    UpcomingEventsPanel,
+)
 from ui.dialogs.settings_dialog import SettingsDialog
 from ui.styles import OUTER_CONTAINER_STYLE
 from utils.app_settings import AppSettings
@@ -3646,6 +4811,7 @@ class CalendarWidget(
         super().__init__()
 
         self.settings = AppSettings()
+
         self.upcoming_days = (
             self.settings.get_upcoming_days()
         )
@@ -3662,10 +4828,16 @@ class CalendarWidget(
         )
 
         self.cache = EventCache()
+
         self.last_successful_update = None
         self.sync_failed = False
         self.cache_updated_at = None
         self.has_cached_events = False
+
+        # Separate scraper state from
+        # overall Calendar/API sync state.
+        self.scraper_status = "unknown"
+        self.scraper_error = None
 
         self._setup_window()
         self._setup_ui()
@@ -3679,11 +4851,11 @@ class CalendarWidget(
                 self.settings,
             )
         )
+
         self.position_manager.restore()
 
         self._load_cached_events()
         self.controller.refresh()
-
 
     # ================================================================
     # CACHE / STARTUP
@@ -3691,6 +4863,7 @@ class CalendarWidget(
 
     def _load_cached_events(self) -> None:
         events = self.cache.load()
+
         self.cache_updated_at = (
             self.cache.get_updated_at()
         )
@@ -3700,13 +4873,20 @@ class CalendarWidget(
 
         self.has_cached_events = True
 
-        self.month_calendar.set_events(events)
-        self.upcoming_events.set_events(events)
+        self.month_calendar.set_events(
+            events
+        )
+
+        self.upcoming_events.set_events(
+            events
+        )
 
         if self.cache_updated_at:
             self.last_successful_update = (
-                self.cache_updated_at.astimezone()
+                self.cache_updated_at
+                .astimezone()
             )
+
             self.upcoming_events.set_sync_status(
                 self._saved_status_text(
                     self.last_successful_update
@@ -3718,9 +4898,10 @@ class CalendarWidget(
     # ================================================================
 
     def _setup_window(self) -> None:
-        self.setWindowTitle("Desktop Calendar")
+        self.setWindowTitle(
+            "Desktop Calendar"
+        )
 
-        # Desktop-style utility window: no normal taskbar button.
         self.setWindowFlags(
             Qt.Tool
             | Qt.FramelessWindowHint
@@ -3730,8 +4911,16 @@ class CalendarWidget(
             Qt.WA_TranslucentBackground
         )
 
-        self.resize(850, 320)
-        self.setMinimumSize(650, 300)
+        self.resize(
+            850,
+            320,
+        )
+
+        self.setMinimumSize(
+            650,
+            300,
+        )
+
         self.setMouseTracking(True)
 
     def showEvent(
@@ -3739,19 +4928,30 @@ class CalendarWidget(
         event: QShowEvent,
     ) -> None:
         super().showEvent(event)
-        self.upcoming_events.ensure_header_controls_visible()
-        self.visibility_changed.emit(True)
+
+        self.upcoming_events\
+            .ensure_header_controls_visible()
+
+        self.visibility_changed.emit(
+            True
+        )
 
     def hideEvent(
         self,
         event: QHideEvent,
     ) -> None:
         super().hideEvent(event)
-        self.visibility_changed.emit(False)
+
+        self.visibility_changed.emit(
+            False
+        )
 
     def show_from_tray(self) -> None:
         self.show()
-        self.upcoming_events.ensure_header_controls_visible()
+
+        self.upcoming_events\
+            .ensure_header_controls_visible()
+
         self.raise_()
         self.activateWindow()
 
@@ -3766,12 +4966,25 @@ class CalendarWidget(
     # ================================================================
 
     def _setup_ui(self) -> None:
-        main_layout = QHBoxLayout(self)
-        main_layout.setContentsMargins(8, 8, 8, 8)
+        main_layout = QHBoxLayout(
+            self
+        )
+
+        main_layout.setContentsMargins(
+            8,
+            8,
+            8,
+            8,
+        )
+
         main_layout.setSpacing(0)
 
         self.outer_container = QWidget()
-        self.outer_container.setObjectName("outerContainer")
+
+        self.outer_container.setObjectName(
+            "outerContainer"
+        )
+
         self.outer_container.setStyleSheet(
             OUTER_CONTAINER_STYLE
         )
@@ -3779,18 +4992,32 @@ class CalendarWidget(
         outer_layout = QHBoxLayout(
             self.outer_container
         )
-        outer_layout.setContentsMargins(0, 0, 0, 0)
+
+        outer_layout.setContentsMargins(
+            0,
+            0,
+            0,
+            0,
+        )
+
         outer_layout.setSpacing(0)
 
-        self.month_calendar = MonthCalendar()
-        self.upcoming_events = UpcomingEventsPanel(
-            days_ahead=self.upcoming_days
+        self.month_calendar = (
+            MonthCalendar()
+        )
+
+        self.upcoming_events = (
+            UpcomingEventsPanel(
+                days_ahead=
+                    self.upcoming_days
+            )
         )
 
         outer_layout.addWidget(
             self.month_calendar,
             1,
         )
+
         outer_layout.addWidget(
             self.upcoming_events,
             1,
@@ -3808,32 +5035,58 @@ class CalendarWidget(
         self.controller.events_updated.connect(
             self._display_events
         )
+
         self.controller.error.connect(
             self._handle_calendar_error
         )
 
-        self.upcoming_events.open_google_calendar_requested.connect(
-            self._open_google_calendar
-        )
-        self.upcoming_events.refresh_requested.connect(
-            self._refresh_now
-        )
-        self.upcoming_events.lock_position_requested.connect(
-            self._change_position_lock
-        )
-        self.upcoming_events.upcoming_requested.connect(
-            self._show_upcoming_mode
-        )
-        self.upcoming_events.close_requested.connect(
-            self.hide
-        )
+        self.controller\
+            .scraper_status_changed\
+            .connect(
+                self._handle_scraper_status
+            )
 
-        self.month_calendar.date_selected.connect(
-            self._show_selected_date
-        )
-        self.month_calendar.month_changed.connect(
-            self._month_changed
-        )
+        self.upcoming_events\
+            .open_google_calendar_requested\
+            .connect(
+                self._open_google_calendar
+            )
+
+        self.upcoming_events\
+            .refresh_requested\
+            .connect(
+                self._refresh_now
+            )
+
+        self.upcoming_events\
+            .lock_position_requested\
+            .connect(
+                self._change_position_lock
+            )
+
+        self.upcoming_events\
+            .upcoming_requested\
+            .connect(
+                self._show_upcoming_mode
+            )
+
+        self.upcoming_events\
+            .close_requested\
+            .connect(
+                self.hide
+            )
+
+        self.month_calendar\
+            .date_selected\
+            .connect(
+                self._show_selected_date
+            )
+
+        self.month_calendar\
+            .month_changed\
+            .connect(
+                self._month_changed
+            )
 
     # ================================================================
     # TIMER
@@ -3841,20 +5094,67 @@ class CalendarWidget(
 
     def _setup_timer(self) -> None:
         self.timer = QTimer(self)
+
         self.timer.timeout.connect(
             self.controller.refresh
         )
+
         self.timer.start(
             self.REFRESH_INTERVAL_MS
         )
 
-        self.status_timer = QTimer(self)
+        self.status_timer = QTimer(
+            self
+        )
+
         self.status_timer.timeout.connect(
             self._update_sync_status
         )
-        self.status_timer.start(30_000)
+
+        self.status_timer.start(
+            30_000
+        )
 
     def _update_sync_status(self) -> None:
+        if self.sync_failed:
+            if self.last_successful_update:
+                age_text = self._age_text(
+                    self.last_successful_update
+                )
+
+                self.upcoming_events\
+                    .set_sync_status(
+                        (
+                            "â€¢ Showing saved events"
+                            f" Â· Updated {age_text}"
+                        ),
+                        warning=True,
+                    )
+
+            else:
+                self.upcoming_events\
+                    .set_sync_status(
+                        (
+                            "â€¢ Couldn't connect to "
+                            "Google Calendar"
+                        ),
+                        warning=True,
+                    )
+
+            return
+
+        if self.scraper_status == "cached":
+            self.upcoming_events\
+                .set_sync_status(
+                    (
+                        "â€¢ Task sync issue Â· "
+                        "Showing cached task data"
+                    ),
+                    warning=True,
+                )
+
+            return
+
         if self.last_successful_update is None:
             return
 
@@ -3862,15 +5162,9 @@ class CalendarWidget(
             self.last_successful_update
         )
 
-        if self.sync_failed:
-            self.upcoming_events.set_sync_status(
-                f"â€¢ Showing saved events Â· Updated {age_text}",
-                warning=True,
-            )
-        else:
-            self.upcoming_events.set_sync_status(
-                f"â€¢ Updated {age_text}"
-            )
+        self.upcoming_events.set_sync_status(
+            f"â€¢ Updated {age_text}"
+        )
 
     # ================================================================
     # DISPLAY
@@ -3881,14 +5175,22 @@ class CalendarWidget(
         self,
         events: list[CalendarEvent],
     ) -> None:
-        self.month_calendar.set_events(events)
-        self.upcoming_events.set_events(events)
+        self.month_calendar.set_events(
+            events
+        )
 
-        self.cache.save(events)
+        self.upcoming_events.set_events(
+            events
+        )
+
+        self.cache.save(
+            events
+        )
 
         self.last_successful_update = (
             datetime.now().astimezone()
         )
+
         self.sync_failed = False
 
         self._update_sync_status()
@@ -3896,6 +5198,36 @@ class CalendarWidget(
         self._install_mouse_tracking(
             self.outer_container
         )
+
+    # ================================================================
+    # SCRAPER STATUS
+    # ================================================================
+
+    @Slot(object)
+    def _handle_scraper_status(
+        self,
+        status: object,
+    ) -> None:
+        if not isinstance(
+            status,
+            dict,
+        ):
+            return
+
+        self.scraper_status = (
+            status.get(
+                "status",
+                "unknown",
+            )
+        )
+
+        self.scraper_error = (
+            status.get(
+                "error"
+            )
+        )
+
+        self._update_sync_status()
 
     # ================================================================
     # DATE SELECTION
@@ -3918,9 +5250,14 @@ class CalendarWidget(
         self._show_upcoming_mode()
 
     @Slot()
-    def _show_upcoming_mode(self) -> None:
-        self.month_calendar.clear_selection()
-        self.upcoming_events.show_upcoming()
+    def _show_upcoming_mode(
+        self,
+    ) -> None:
+        self.month_calendar\
+            .clear_selection()
+
+        self.upcoming_events\
+            .show_upcoming()
 
     # ================================================================
     # ERROR
@@ -3938,23 +5275,22 @@ class CalendarWidget(
 
         self.sync_failed = True
 
-        if self.last_successful_update:
-            self._update_sync_status()
-        else:
-            self.upcoming_events.set_sync_status(
-                "â€¢ Couldn't connect to Google Calendar",
-                warning=True,
-            )
+        self._update_sync_status()
 
     # ================================================================
     # GOOGLE CALENDAR
     # ================================================================
 
     @Slot()
-    def _open_google_calendar(self) -> None:
+    def _open_google_calendar(
+        self,
+    ) -> None:
         QDesktopServices.openUrl(
             QUrl(
-                "https://calendar.google.com/calendar/u/0/r"
+                (
+                    "https://calendar.google.com/"
+                    "calendar/u/0/r"
+                )
             )
         )
 
@@ -3963,45 +5299,75 @@ class CalendarWidget(
     # ================================================================
 
     @Slot()
-    def open_settings(self) -> None:
+    def open_settings(
+        self,
+    ) -> None:
         dialog = SettingsDialog(
             self.upcoming_days,
             self.preferred_browser,
-            self if self.isVisible() else None,
+            (
+                self
+                if self.isVisible()
+                else None
+            ),
         )
 
-        if dialog.exec() != QDialog.Accepted:
+        if (
+            dialog.exec()
+            != QDialog.Accepted
+        ):
             return
 
-        new_days = dialog.upcoming_days()
-        new_browser = dialog.browser()
+        new_days = (
+            dialog.upcoming_days()
+        )
+
+        new_browser = (
+            dialog.browser()
+        )
 
         days_changed = (
-            new_days != self.upcoming_days
-        )
-        browser_changed = (
-            new_browser != self.preferred_browser
+            new_days
+            != self.upcoming_days
         )
 
-        if not days_changed and not browser_changed:
+        browser_changed = (
+            new_browser
+            != self.preferred_browser
+        )
+
+        if (
+            not days_changed
+            and not browser_changed
+        ):
             return
 
         if days_changed:
-            self.upcoming_days = new_days
-            self.settings.set_upcoming_days(
+            self.upcoming_days = (
                 new_days
             )
 
-            self.upcoming_events.set_days_ahead(
-                new_days
-            )
+            self.settings\
+                .set_upcoming_days(
+                    new_days
+                )
+
+            self.upcoming_events\
+                .set_days_ahead(
+                    new_days
+                )
+
             self._show_upcoming_mode()
 
         if browser_changed:
-            self.preferred_browser = new_browser
-            self.settings.set_browser(
+            self.preferred_browser = (
                 new_browser
             )
+
+            self.settings\
+                .set_browser(
+                    new_browser
+                )
 
         self.settings.sync()
 
@@ -4010,25 +5376,34 @@ class CalendarWidget(
     # ================================================================
 
     @Slot()
-    def _reset_position(self) -> None:
-        self.position_manager.move_to_default_screen()
+    def _reset_position(
+        self,
+    ) -> None:
+        self.position_manager\
+            .move_to_default_screen()
 
     @Slot(bool)
     def _change_position_lock(
         self,
         locked: bool,
     ) -> None:
-        self.set_position_locked(locked)
+        self.set_position_locked(
+            locked
+        )
 
     # ================================================================
     # REFRESH
     # ================================================================
 
     @Slot()
-    def _refresh_now(self) -> None:
-        self.upcoming_events.set_sync_status(
-            "Refreshing..."
-        )
+    def _refresh_now(
+        self,
+    ) -> None:
+        self.upcoming_events\
+            .set_sync_status(
+                "Refreshing..."
+            )
+
         self.controller.refresh()
 
     # ================================================================
@@ -4041,21 +5416,35 @@ class CalendarWidget(
     ) -> str:
         return (
             "Showing saved events Â· Updated "
-            + self._age_text(updated_at)
+            + self._age_text(
+                updated_at
+            )
         )
 
     def _age_text(
         self,
         updated_at: datetime,
     ) -> str:
-        now = datetime.now().astimezone()
-        updated_at = updated_at.astimezone()
+        now = (
+            datetime.now()
+            .astimezone()
+        )
+
+        updated_at = (
+            updated_at.astimezone()
+        )
 
         seconds = max(
             0,
-            (now - updated_at).total_seconds(),
+            (
+                now
+                - updated_at
+            ).total_seconds(),
         )
-        minutes = int(seconds // 60)
+
+        minutes = int(
+            seconds // 60
+        )
 
         if minutes == 0:
             return "just now"
@@ -4064,14 +5453,20 @@ class CalendarWidget(
             return "1 min ago"
 
         if minutes < 60:
-            return f"{minutes} min ago"
+            return (
+                f"{minutes} min ago"
+            )
 
-        hours = minutes // 60
+        hours = (
+            minutes // 60
+        )
 
         if hours == 1:
             return "1 hour ago"
 
-        return f"{hours} hours ago"
+        return (
+            f"{hours} hours ago"
+        )
 
 ============================================================
 FILE: ui\icons.py
