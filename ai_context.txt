@@ -2,7 +2,7 @@
 DESKTOP CALENDAR - AI PROJECT CONTEXT
 ============================================================
 
-Generated: 08/21/2026 15:48:05
+Generated: 08/22/2026 17:49:37
 
 ============================================================
 PRODUCT PURPOSE
@@ -11,163 +11,84 @@ PRODUCT PURPOSE
 Desktop Calendar is a lightweight Windows desktop calendar
 widget built with PySide6.
 
-The product is NOT intended to replace Google Calendar.
+Its purpose is to let the user glance at the desktop and
+immediately understand what is coming up.
 
-Its primary purpose is:
-
-    Open computer
-        ->
-    glance at the desktop
-        ->
-    immediately understand what is coming up
-
-The widget should minimize the amount of attention, reading,
-clicking and interaction required from the user.
-
-Google Calendar remains the source of truth for creating,
-editing and deleting calendar data.
-
-The desktop widget mainly provides a fast, glanceable,
-read-oriented view of upcoming commitments.
+Google Calendar and Google Tasks remain the source of truth.
 
 ============================================================
-PRODUCT / UX PRINCIPLES
+CURRENT DATA ARCHITECTURE
 ============================================================
 
-1. MINIMIZE COGNITIVE LOAD
+1. Google Calendar API
+   - events and appointments
 
-The user should understand the important information within
-a few seconds.
+2. Google Tasks API
+   - dated task data
 
-Important information:
-- date
-- time
-- event/task title
-- whether the displayed data is up to date
+3. Google Calendar UI scraper
+   - supplements recurring-task occurrences / Calendar-visible
+     task time information that is not equivalently exposed by
+     the Tasks API
 
-Avoid unnecessary text, controls and visual noise.
-
-
-2. GLANCEABILITY FIRST
-
-Primary information must be visible without requiring clicks,
-hovering, opening menus or navigating through screens.
-
-Hover text is appropriate only for secondary controls.
-
-
-3. DO NOT REBUILD GOOGLE CALENDAR
-
-Complex calendar management such as creating, editing,
-deleting events and appointment schedules belongs in
-Google Calendar.
-
-The widget can open Google Calendar when the user needs
-those capabilities.
-
-
-4. QUIET DESKTOP BEHAVIOUR
-
-The application should behave like a desktop widget:
-
-- start automatically with Windows
-- remain visible on the desktop
-- not steal focus unnecessarily
-- not open visible browser windows for background work
-- refresh silently
-- default to a locked position
-
-
-5. FAST STARTUP
-
-Cached events/tasks should be displayed immediately when the
-application starts.
-
-Network synchronisation happens afterwards in the background.
-
-
-6. GRACEFUL FAILURE
-
-Network, Google Calendar or scraper failures should not make
-the widget suddenly empty.
-
-If fresh data cannot be retrieved, continue displaying the
-last successful cached data and show a lightweight status such
-as:
-
-    Warning: Showing saved events - Updated 12 min ago
-
-
-7. SOURCE OF TRUTH
-
-Google Calendar / Google Tasks are the authoritative data
-sources.
-
-Local cache exists only to improve startup speed and
-resilience. It is not an independent calendar database.
-
-
-8. LOW-EFFORT STATUS
-
-Synchronisation state should be understandable at a glance.
-
-Examples:
-
-    Updated just now
-    Updated 3 min ago
-    Warning: Showing saved events - Updated 18 min ago
-
-The user should not need to inspect logs or terminals.
-
-
-9. BACKGROUND IMPLEMENTATION SHOULD BE INVISIBLE
-
-OAuth, Chrome debugging, Playwright scraping, caching and
-network requests are implementation details.
-
-Normal users should not have to manually start Chrome,
-run PowerShell commands, or understand these systems.
-
-
-10. KEEP THE PRODUCT SMALL
-
-Before adding a feature, ask:
-
-    Does this reduce the effort required to understand
-    what is coming up?
-
-If not, it probably does not belong in the always-visible
-widget UI.
+The scraper uses Playwright and an app-owned Chromium browser
+profile (Edge by default; Chrome and Brave are also supported).
 
 ============================================================
-AI COLLABORATION GUIDANCE
+FIRST-RUN SETUP
 ============================================================
 
-When suggesting changes:
+Before the normal widget starts:
 
-- preserve the glanceable-widget philosophy
-- prefer simpler UX over additional features
-- avoid turning the app into a full calendar client
-- keep network/browser work outside the UI thread
-- preserve cached data when refresh fails
-- avoid unnecessary popups
-- avoid adding permanently visible controls for rare actions
-- treat Google Calendar as the management interface
-- prioritize reliability at Windows startup
+1. Google OAuth sign-in for Calendar + Tasks APIs
+2. Choose Edge / Chrome / Brave
+3. Sign in to Google Calendar in the app-owned browser profile
+4. Verify Calendar sign-in
+5. Mark setup complete
 
-Sensitive credentials, browser profiles, caches and generated
-files must never be included in this context or committed to Git.
+Normal browser work is headless after setup.
 
+============================================================
+LOCAL DATA
+============================================================
+
+Per-user runtime data lives under:
+
+    %LOCALAPPDATA%\DesktopCalendar\
+
+including:
+
+- token.json
+- cache.json
+- BrowserProfiles\
+
+Preferences and setup state use Qt QSettings.
+
+Sensitive credentials, OAuth tokens, browser profiles, caches,
+generated build output and personal data must never be included
+in this AI context or committed to Git.
+
+============================================================
+RELIABILITY PRIORITY
+============================================================
+
+The Google Calendar UI scraper is a supplementary, inherently
+less stable integration.
+
+Future reliability hardening must ensure that scraper failure
+cannot silently make the calendar appear complete.
+
+See RELIABILITY.md.
 
 ============================================================
 PROJECT STRUCTURE
 ============================================================
 
 [FILE] app.py
-[FILE] config.py
-[FILE] config.example.json
 [FILE] README.md
 [FILE] ARCHITECTURE.md
+[FILE] RELIABILITY.md
+[FILE] BUILD.md
 [FILE] requirements.txt
 [FILE] export_project.ps1
 [DIR] controllers
@@ -186,6 +107,7 @@ PROJECT STRUCTURE
 [FILE] services\google_calendar_api.py
 [FILE] services\google_calendar_scraper.py
 [FILE] services\google_tasks.py
+[FILE] services\scraper_cache.py
 [FILE] services\__init__.py
 [DIR] ui
 [DIR]  ui\behaviors
@@ -203,7 +125,9 @@ PROJECT STRUCTURE
 [FILE] ui\components\month_calendar.py
 [FILE] ui\components\upcoming_events.py
 [FILE] ui\components\__init__.py
+[FILE] ui\dialogs\browser_setup_dialog.py
 [FILE] ui\dialogs\create_item_dialog.py
+[FILE] ui\dialogs\first_run_setup_dialog.py
 [FILE] ui\dialogs\settings_dialog.py
 [FILE] ui\dialogs\__init__.py
 [DIR] utils
@@ -220,26 +144,26 @@ import ctypes
 import sys
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap
-from PySide6.QtWidgets import QApplication
+from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
+from PySide6.QtWidgets import QApplication, QDialog
 
 from ui.calendar_widget import CalendarWidget
+from ui.dialogs.first_run_setup_dialog import FirstRunSetupDialog
 from ui.system_tray import SystemTray
+from utils.app_settings import AppSettings
 from utils.windows_startup import enable_auto_start
 
 
 def create_app_icon() -> QIcon:
+    """Create a simple calendar icon that stays readable in the system tray."""
     pixmap = QPixmap(64, 64)
     pixmap.fill(Qt.transparent)
 
     painter = QPainter(pixmap)
-    painter.setRenderHint(
-        QPainter.Antialiasing
-    )
+    painter.setRenderHint(QPainter.Antialiasing)
 
-    painter.setBrush(
-        QColor("#3B82F6")
-    )
+    # Blue app tile.
+    painter.setBrush(QColor("#3B82F6"))
     painter.setPen(Qt.NoPen)
     painter.drawRoundedRect(
         4,
@@ -250,38 +174,66 @@ def create_app_icon() -> QIcon:
         12,
     )
 
-    painter.setBrush(
-        QColor("#FFFFFF")
-    )
+    # White calendar body.
+    painter.setBrush(QColor("#FFFFFF"))
     painter.drawRoundedRect(
-        10,
-        10,
-        44,
-        12,
-        4,
-        4,
+        13,
+        15,
+        38,
+        36,
+        6,
+        6,
     )
 
-    painter.setPen(
-        QColor("#FFFFFF")
+    # Blue header strip cut into the white calendar body.
+    painter.setBrush(QColor("#3B82F6"))
+    painter.drawRoundedRect(
+        13,
+        15,
+        38,
+        11,
+        6,
+        6,
     )
-    painter.setFont(
-        QFont(
-            "Segoe UI",
-            22,
-            QFont.Bold,
-        )
+    painter.drawRect(
+        13,
+        21,
+        38,
+        5,
     )
-    painter.drawText(
-        pixmap.rect().adjusted(
-            0,
-            12,
-            0,
-            0,
-        ),
-        Qt.AlignCenter,
-        "20",
+
+    # Calendar binding rings.
+    painter.setBrush(QColor("#FFFFFF"))
+    painter.drawRoundedRect(
+        20,
+        9,
+        5,
+        12,
+        2,
+        2,
     )
+    painter.drawRoundedRect(
+        39,
+        9,
+        5,
+        12,
+        2,
+        2,
+    )
+
+    # Small blue date blocks. No fixed day number, so the icon stays generic.
+    painter.setBrush(QColor("#3B82F6"))
+    for x in (20, 31, 42):
+        for y in (31, 41):
+            painter.drawRoundedRect(
+                x,
+                y,
+                6,
+                6,
+                2,
+                2,
+            )
+
     painter.end()
 
     return QIcon(pixmap)
@@ -295,13 +247,25 @@ def main() -> None:
     except Exception:
         pass
 
-    enable_auto_start()
-
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
 
     icon = create_app_icon()
     app.setWindowIcon(icon)
+
+    settings = AppSettings()
+
+    # First install: complete Google OAuth + browser sign-in before the
+    # CalendarWidget is created. This prevents the scraper from launching
+    # headlessly before the user has signed in.
+    if not settings.is_setup_complete():
+        setup_dialog = FirstRunSetupDialog()
+
+        if setup_dialog.exec() != QDialog.Accepted:
+            return
+
+    # Only register Windows auto-start after first-time setup succeeds.
+    enable_auto_start()
 
     widget = CalendarWidget()
     widget.setWindowIcon(icon)
@@ -351,78 +315,111 @@ if __name__ == "__main__":
     main()
 
 ============================================================
-FILE: config.py
-============================================================
-
-import json
-from pathlib import Path
-from typing import Any
-
-BASE_DIR = Path(__file__).resolve().parent
-CONFIG_PATH = BASE_DIR / "config.json"
-
-
-def load_config() -> dict[str, Any]:
-    if not CONFIG_PATH.exists():
-        raise FileNotFoundError(
-            "config.json was not found. Copy config.example.json to config.json "
-            "and fill in your calendar settings."
-        )
-
-    with CONFIG_PATH.open("r", encoding="utf-8") as file:
-        return json.load(file)
-
-============================================================
-FILE: config.example.json
-============================================================
-
-{
-  "calendar_url": "YOUR_PRIVATE_ICAL_URL",
-  "days_ahead": 14
-}
-
-============================================================
 FILE: README.md
 ============================================================
 
 # Desktop Calendar
 
-A lightweight PySide6 desktop calendar widget for Windows.
+A lightweight, glanceable Windows desktop calendar widget built with PySide6.
 
 The goal is simple:
 
-> Open your computer, glance at the widget, and immediately understand what is coming up.
+> Open your computer, glance at the desktop, and immediately understand what is coming up.
 
-Desktop Calendar is intentionally not a replacement for Google Calendar. Google Calendar remains the source of truth for creating, editing and managing calendar data.
+Desktop Calendar is not intended to replace Google Calendar. Google Calendar and Google Tasks remain the source of truth for creating, editing and managing calendar data.
 
 ## Current Features
 
 - Monthly calendar overview
-- Mouse-wheel month navigation: up to 3 months back and 6 months forward
-- Upcoming list with a 7-day default
-- Optional upcoming ranges of 3, 7, 14 or 30 days through Settings
-- Google Calendar event synchronisation
-- Google Tasks support
-- Persistent background browser session where scraping is required
-- Automatic periodic refresh and manual refresh
-- Local event/task cache displayed immediately at startup
-- Last-updated / synchronisation status
-- Graceful fallback to saved events when refresh fails
-- Open Google Calendar directly from the widget
-- Lock/unlock widget position
-- Frameless draggable and resizable window
-- Multi-monitor-safe position restore
-- Automatic recovery if a previously used monitor is disconnected
-- System tray icon with Show, Hide, Settings and Quit
-- Automatic Windows startup support
+- Mouse-wheel month navigation across the nearby planning window
+- Upcoming list with configurable 3, 7, 14 or 30-day range
+- Google Calendar event and appointment synchronisation through the Google Calendar API
+- Google Tasks synchronisation through the Google Tasks API
+- Recurring-task/time enrichment by reading the Google Calendar web UI where the Tasks API does not expose equivalent information
+- First-run setup flow for Google OAuth and browser sign-in
+- Microsoft Edge, Google Chrome and Brave support for the background Calendar browser
+- Microsoft Edge is the default browser
+- Dedicated app-owned browser profile; the user's normal browser profile is not modified
+- Persistent local cache displayed immediately at startup
+- Automatic refresh and manual refresh
+- Frameless, draggable and resizable widget
+- Lock/unlock position
+- Multi-monitor-safe geometry restore
+- System tray controls for Show, Hide, Settings and Quit
+- No normal taskbar button while the widget is running
+- Automatic Windows startup after first-time setup completes
+- PyInstaller-compatible Windows build
+- Inno Setup-compatible installer flow
 
-## UX Principles
+## Data Sources
 
-The widget prioritizes glanceability, minimal interaction, quiet background behaviour and graceful failure. Primary information such as date, time, title and sync freshness should be understandable without opening menus or navigating screens.
+Desktop Calendar combines three sources:
 
-Rare controls belong outside the always-visible interface. For example, the upcoming-range preference is available through the system tray Settings dialog instead of adding another permanent control to the widget.
+1. **Google Calendar API**
+   - Events
+   - Appointments
+   - Recurring events
+   - Time, location, description and other event metadata
 
-## Run
+2. **Google Tasks API**
+   - Dated Google Tasks
+   - Completed and uncompleted tasks within the requested date range
+
+3. **Google Calendar web UI scraper**
+   - Used only for task information that the Tasks API does not expose equivalently
+   - In particular, recurring-task occurrences and Calendar-visible task time information
+   - Uses Playwright with a dedicated Chromium-based browser profile
+
+The scraper is intentionally a supplement, not the primary calendar backend.
+
+## First-Time Setup
+
+On first launch, Desktop Calendar requires two one-time sign-ins.
+
+### 1. Google OAuth
+
+The user signs in with Google and grants Calendar and Tasks access.
+
+The OAuth token is stored locally at:
+
+```text
+%LOCALAPPDATA%\DesktopCalendar\token.json
+```
+
+### 2. Google Calendar browser sign-in
+
+The user chooses:
+
+- Microsoft Edge (recommended/default)
+- Google Chrome
+- Brave
+
+Desktop Calendar opens the selected browser with a separate app-owned profile. The user signs in until Google Calendar itself is visible, then the app verifies the session.
+
+Normal background operation is headless after setup.
+
+Browser profiles are stored under:
+
+```text
+%LOCALAPPDATA%\DesktopCalendar\BrowserProfiles\
+```
+
+## Local Data
+
+Persistent runtime data is stored outside the installation/project directory:
+
+```text
+%LOCALAPPDATA%\DesktopCalendar\
+â”œâ”€â”€ BrowserProfiles\
+â”œâ”€â”€ cache.json
+â””â”€â”€ token.json
+```
+
+Window geometry, browser preference, upcoming range and setup state are stored with Qt `QSettings`.
+
+Sensitive runtime data must not be committed to Git.
+
+## Running from Source
 
 Install dependencies:
 
@@ -430,31 +427,57 @@ Install dependencies:
 pip install -r requirements.txt
 ```
 
-Create your private configuration from the example:
-
-```powershell
-Copy-Item config.example.json config.json
-```
-
-Then run:
+Make sure the Google OAuth desktop-client `credentials.json` exists in the project root, then run:
 
 ```powershell
 python app.py
 ```
 
-## Configuration and Private Data
+`config.json` / private iCal configuration is no longer part of the active Calendar data path. Calendar events are read through the Google Calendar API.
 
-`config.json` contains private calendar configuration and must not be committed to Git. OAuth files such as `credentials.json` and `token.json` must also remain local.
+## Building
 
-Persistent application data is stored outside the repository. The event cache and Chrome profile use `%LOCALAPPDATA%\DesktopCalendar\`. User preferences such as the upcoming range and window geometry are stored through Qt's `QSettings` mechanism.
+A development build can be produced with PyInstaller:
 
-## Background Browser Integration
+```powershell
+python -m PyInstaller `
+    --noconfirm `
+    --clean `
+    --onedir `
+    --windowed `
+    --name DesktopCalendar `
+    --collect-all playwright `
+    --add-data "credentials.json:." `
+    app.py
+```
 
-Some Google Calendar information is obtained through a dedicated persistent Chrome profile and Playwright. The browser is launched headlessly and should remain an implementation detail during normal use.
+The resulting application is:
+
+```text
+dist\DesktopCalendar\DesktopCalendar.exe
+```
+
+See `BUILD.md` for the release/installer workflow.
+
+## Public Distribution
+
+For arbitrary Google users to sign in without being manually added as OAuth test users, the Google OAuth application must be configured for production/public use and satisfy Google's verification requirements for the requested scopes.
+
+Do not publish personal tokens, browser profiles, caches or other user-specific data.
+
+## Reliability
+
+The Google APIs are the stable integration layer. The Google Calendar UI scraper is inherently less stable because Google can change the Calendar web interface.
+
+The long-term reliability goal is therefore not to assume the scraper can never break. It is to make scraper failure detectable, preserve the last known-good recurring-task data, and never silently present an incomplete calendar as fully up to date.
+
+See `RELIABILITY.md`.
 
 ## Non-Goals
 
-Desktop Calendar is not intended to become a complete Google Calendar client. Complex event management, appointment schedules and advanced calendar configuration continue to belong in Google Calendar.
+Desktop Calendar is not intended to become a full Google Calendar client.
+
+Complex calendar management, advanced scheduling and account administration belong in Google Calendar.
 
 The widget remains focused on one question:
 
@@ -464,125 +487,636 @@ The widget remains focused on one question:
 FILE: ARCHITECTURE.md
 ============================================================
 
-# Architecture Notes
+# Desktop Calendar Architecture
 
-## Product Architecture Principle
+## Product Principle
 
-Desktop Calendar is a glanceable desktop companion rather than a full calendar application. Technical complexity should remain behind a simple always-visible widget.
+Desktop Calendar is a glanceable desktop companion, not a replacement for Google Calendar.
 
-Google Calendar and Google Tasks remain the authoritative sources. Local data exists only for startup speed, resilience and lightweight user preferences.
+The UI should stay small and quiet while network access, OAuth, browser automation, caching and synchronisation remain implementation details.
+
+Google Calendar and Google Tasks are authoritative. Local storage exists for startup speed, resilience and preferences.
+
+## High-Level Architecture
+
+```text
+                    Google Account
+                         |
+          +--------------+---------------+
+          |                              |
+          v                              v
+ Google Calendar API              Google Tasks API
+          |                              |
+          |                        dated task data
+          |                              |
+          +--------------+---------------+
+                         |
+                         v
+                CombinedCalendarService
+                         ^
+                         |
+              Playwright task scraper
+                         ^
+                         |
+        app-owned Edge / Chrome / Brave profile
+                         |
+                         v
+               Google Calendar web UI
+
+                         |
+                         v
+                CalendarController
+                 (background worker)
+                         |
+                         v
+                   CalendarWidget
+              +----------+----------+
+              |                     |
+              v                     v
+         MonthCalendar        UpcomingEventsPanel
+                                     |
+                                     v
+                                  EventCard
+```
 
 ## Layers
 
 ### `models/`
 
-Defines application-level data structures. `CalendarEvent` is the shared representation consumed by the UI.
+`CalendarEvent` is the shared application-level representation for both events and tasks.
 
-### `services/`
+The UI consumes this model rather than Google API payloads or DOM structures.
 
-Owns external data access, including iCal, Google APIs, Tasks, browser automation and local cache.
+### `services/google_calendar_api.py`
 
-### `controllers/`
+Primary Calendar integration.
 
-Coordinates service work and keeps network or browser work off the UI thread.
+Responsibilities include:
 
-### `ui/components/`
+- reading events in a date range
+- recurring event expansion through the Calendar API's normal event listing behaviour
+- event metadata conversion into `CalendarEvent`
+- event creation
 
-Contains focused presentation components:
+This replaces the older private-iCal read path as the active event source.
 
-- `month_calendar.py` â€” month grid and wheel navigation
-- `upcoming_events.py` â€” upcoming-list composition and controls
-- `event_card.py` â€” presentation of a single event/task
+### `services/google_tasks.py`
 
-### `ui/behaviors/`
+Primary Google Tasks integration.
 
-Contains window behaviour that is independent of calendar data:
+Responsibilities include:
 
-- `frameless_window.py` â€” drag, resize and lock behaviour
-- `window_position.py` â€” saved geometry and multi-monitor recovery
+- listing dated tasks
+- including completed tasks where appropriate for calendar history
+- creating tasks
+- converting Tasks API objects into `CalendarEvent`
+
+The Tasks API does not expose all recurring-task occurrence/time information visible inside Google Calendar.
+
+### `services/google_calendar_scraper.py`
+
+Supplementary task integration.
+
+Responsibilities include:
+
+- connecting to the app-owned Chromium browser over CDP
+- opening Google Calendar month views
+- reading Calendar-rendered task accessibility text
+- extracting task title, date and displayed time
+- supplementing/replacing matching API tasks when richer information is available
+
+The scraper deliberately uses semantic/accessibility-oriented information such as `role="button"` and task text rather than Google-generated CSS class names where possible.
+
+Because Google controls the Calendar UI, this service must always be treated as less reliable than the official APIs.
+
+### `services/chrome_calendar_session.py`
+
+Despite the historical filename, this module manages supported Chromium browsers:
+
+- Microsoft Edge
+- Google Chrome
+- Brave
+
+It:
+
+- detects installed browser executables
+- uses a dedicated Desktop Calendar browser profile
+- launches the profile visibly during sign-in
+- launches it headlessly during normal scraping
+- exposes CDP on the local debugging port
+- switches between visible and background modes
+- detects whether Google Calendar is signed in
+
+Microsoft Edge is the default.
+
+### `services/combined_calendar.py`
+
+Aggregates:
+
+- Calendar API events
+- Tasks API tasks
+- scraper-enriched tasks
+
+Tasks are deduplicated primarily by normalized title and event date so a scraper result can replace the matching API representation when it contains richer Calendar-visible timing.
+
+This service is also the main target for the planned reliability-hardening work described in `RELIABILITY.md`.
+
+### `services/event_cache.py`
+
+Stores the last successful combined dataset under `%LOCALAPPDATA%\DesktopCalendar`.
+
+Current behaviour provides fast startup and whole-dataset fallback.
+
+Planned hardening will distinguish source-specific health and preserve last-known-good scraper data independently so a partial failure cannot overwrite good recurring-task data.
+
+### `controllers/calendar_controller.py`
+
+Keeps service work off the Qt UI thread by running refresh jobs through `QThreadPool`.
+
+The controller currently emits a combined result or top-level error.
+
+Future reliability work should carry structured per-source sync health in addition to data.
+
+### `ui/dialogs/first_run_setup_dialog.py`
+
+Required setup gate before the normal widget starts.
+
+Flow:
+
+```text
+First launch
+    |
+    v
+Google OAuth
+    |
+    v
+Choose Edge / Chrome / Brave
+    |
+    v
+Open app-owned browser profile
+    |
+    v
+Sign in until Google Calendar is visible
+    |
+    v
+Verify browser session
+    |
+    v
+Mark setup complete
+    |
+    v
+Start CalendarWidget
+```
+
+If setup is cancelled, the normal widget does not start.
+
+Windows auto-start is registered only after setup succeeds.
+
+### `ui/calendar_widget.py`
+
+Top-level desktop widget.
+
+Responsibilities include:
+
+- immediate cache display
+- starting background refresh
+- status display
+- month/date interaction
+- Settings
+- browser preference
+- lock/unlock position
+- opening Google Calendar
+- tray visibility integration
+
+The window uses `Qt.Tool | Qt.FramelessWindowHint`, so it behaves as a desktop utility without a normal taskbar button.
 
 ### `ui/system_tray.py`
 
-Owns the Windows system tray interface. Rare actions such as Settings and Quit remain outside the permanent widget UI.
-
-### `ui/dialogs/settings_dialog.py`
-
-Provides the small user preference surface for the upcoming range. The default is 7 days, with 3, 7, 14 and 30-day choices.
-
-### `utils/app_settings.py`
-
-Stores user preferences with Qt `QSettings`. Preferences are not mixed into the private calendar integration configuration.
-
-## Startup Flow
-
-```text
-Windows / User launches app
-             |
-             v
-      CalendarWidget starts
-             |
-       +-----+------+
-       |            |
-       v            v
-Restore window   Load cache
-position         immediately
-       |            |
-       +-----+------+
-             |
-             v
-      Show useful UI
-             |
-             v
-      Background sync
-        +----+----+
-        |         |
-     Success    Failure
-        |         |
-        v         v
- Update UI     Keep cache
- Save cache    Show warning
-```
-
-## Window and Monitor Behaviour
-
-Window geometry and the last screen name are saved through `QSettings`. On startup, the app restores the saved geometry if it is still visible on an attached monitor.
-
-If a previously used monitor is disconnected and the widget would be off-screen, `WindowPositionManager` moves it to an active monitor. The default placement is near the top-right of the preferred or primary monitor.
-
-## Month Navigation
-
-The month grid remains centered on the current month at startup. Mouse-wheel navigation is intentionally bounded to 3 months in the past and 6 months in the future. This supports quick nearby planning without turning the widget into a full calendar browser.
-
-## Upcoming Range
-
-The default upcoming range is 7 days. Users who need a different horizon can select 3, 7, 14 or 30 days through the tray Settings dialog. No range selector is permanently displayed on the widget.
-
-## System Tray
-
-When the Windows system tray is available, closing/hiding the widget does not have to terminate the process. The tray provides:
+Persistent utility control surface:
 
 - Show Calendar
 - Hide Calendar
 - Settings
 - Quit
 
-Clicking the tray icon toggles widget visibility.
+The tray remains the natural launcher/control point while the widget itself stays minimal.
 
-## Graceful Failure
+### `ui/behaviors/frameless_window.py`
 
-A failed refresh must not clear useful cached data. The UI continues displaying the most recent successful cache and communicates freshness with a lightweight status, for example:
+Owns:
+
+- drag
+- edge/corner resize
+- position lock
+
+When locked, drag and resize are disabled.
+
+### `ui/behaviors/window_position.py`
+
+Persists geometry through `QSettings` and recovers the widget safely when monitor topology or resolution changes.
+
+## Runtime Data
 
 ```text
-â  Showing saved events Â· Updated 18 min ago
+%LOCALAPPDATA%\DesktopCalendar\
+â”œâ”€â”€ BrowserProfiles\
+â”‚   â”œâ”€â”€ edge\
+â”‚   â”œâ”€â”€ chrome\
+â”‚   â””â”€â”€ brave\
+â”œâ”€â”€ cache.json
+â””â”€â”€ token.json
 ```
 
-## Design Decision Test
+Not every browser profile directory necessarily exists; only selected/used browsers create profiles.
 
-Before adding a feature, ask:
+Qt preferences are stored separately through `QSettings`.
 
-> Does this reduce the effort required for the user to understand what is coming up?
+## Startup Flow
 
-If not, it probably should not occupy the always-visible widget UI.
+```text
+Application starts
+      |
+      v
+Is setup complete?
+   |          |
+  no         yes
+   |          |
+   v          |
+First-run     |
+setup         |
+   |          |
+success ------+
+      |
+      v
+Create widget
+      |
+      +------------------+
+      |                  |
+      v                  v
+Restore geometry     Load cache
+      |                  |
+      +---------+--------+
+                |
+                v
+          Show useful UI
+                |
+                v
+        Background refresh
+          /       |       \
+         v        v        v
+ Calendar API  Tasks API  Scraper
+         \        |        /
+          \       |       /
+           v      v      v
+        Combined result
+                |
+                v
+         Update UI/cache
+```
+
+## Packaging
+
+Development/release builds use PyInstaller in `--onedir` mode.
+
+Google OAuth client credentials are bundled into the application build while per-user OAuth tokens remain outside the installation directory.
+
+The installer flow uses Inno Setup and packages the contents of:
+
+```text
+dist\DesktopCalendar\
+```
+
+## Current Reliability Boundary
+
+Calendar API and Tasks API are official integrations.
+
+The scraper depends on a web UI controlled by Google. Therefore:
+
+- a Calendar UI redesign can break parsing
+- a browser sign-in can expire
+- a CDP/browser startup can fail
+- rendering/lazy-loading/viewport changes can affect discovered tasks
+
+The application should never equate â€œAPI refresh succeededâ€ with â€œall sources are healthyâ€.
+
+The next architecture phase is source-aware health, anomaly detection and last-known-good scraper preservation.
+
+============================================================
+FILE: RELIABILITY.md
+============================================================
+
+# Reliability Strategy
+
+## Goal
+
+The goal is not to claim that a third-party web scraper can run forever without maintenance.
+
+The goal is stronger in the way that matters to the user:
+
+> A scraper failure must never silently make Desktop Calendar look complete when recurring-task data is no longer trustworthy.
+
+## Threat Model
+
+The recurring-task scraper can fail because of:
+
+- Google Calendar DOM changes
+- accessibility-label/text-format changes
+- Calendar redesigns
+- lazy rendering or viewport changes
+- browser/CDP startup failures
+- Playwright/CDP timeouts
+- Google sign-in expiry
+- account/session changes
+- network failures
+- unexpected zero-result parsing
+- partial month rendering
+
+Official Calendar and Tasks APIs have a different and generally lower integration risk.
+
+## Current State
+
+Current strengths:
+
+- APIs and scraper are separate services
+- scraper exceptions do not have to erase API data
+- a local cache is shown immediately at startup
+- browser sign-in is explicit during first-run setup
+- browser profiles are isolated from the user's normal profile
+- scraper uses semantic/accessibility-oriented DOM information rather than generated CSS classes
+- browser viewport and timeouts are configured to reduce incomplete rendering
+
+Current reliability gap:
+
+- source health is not yet represented independently end-to-end
+- a refresh can appear recent even if the scraper failed
+- combined cache is not yet source-aware
+- an unexpected scraper result of zero tasks is not yet treated as suspicious based on history
+
+## Required Hardening
+
+### 1. Per-source health
+
+Track separately:
+
+```text
+Calendar API
+Tasks API
+Recurring-task scraper
+```
+
+Each source should have:
+
+- state: `healthy`, `failed`, `suspicious`, `auth_required`
+- last attempt time
+- last successful time
+- last error
+- item count
+
+### 2. Never silently convert scraper failure into valid empty data
+
+These situations are different:
+
+```text
+Scraper successfully verified that there are zero tasks
+```
+
+and:
+
+```text
+Scraper could not verify task data
+```
+
+The second must never be represented as an ordinary empty list.
+
+### 3. Separate last-known-good scraper cache
+
+Persist scraper-derived task data independently.
+
+If scraper refresh fails:
+
+- keep displaying the last known-good recurring-task data
+- keep API data fresh
+- mark scraper data as stale/unverified
+- do not overwrite good scraper cache with an empty/failed result
+
+### 4. Anomaly detection
+
+Examples that should become `suspicious` rather than immediate truth:
+
+- scraper previously returned recurring tasks and suddenly returns zero
+- a known recurring series disappears unexpectedly
+- parsed task count drops dramatically between adjacent refreshes
+- Calendar page loads but expected task structure is absent
+- multiple months all produce zero parseable task structures despite historical data
+
+Anomaly detection should be conservative: it should warn rather than invent data.
+
+### 5. Explicit UI status
+
+Healthy:
+
+```text
+Updated just now
+```
+
+Partial degradation:
+
+```text
+â  Recurring tasks not verified Â· Events updated just now
+```
+
+Browser authentication expired:
+
+```text
+â  Google Calendar sign-in required
+```
+
+DOM/parser incompatibility suspected:
+
+```text
+â  Recurring-task sync may be incompatible
+Saved recurring tasks are still shown
+```
+
+### 6. Escalation
+
+Suggested escalation:
+
+- first transient failure: retry silently
+- repeated failure: visible warning
+- authentication failure: direct sign-in action
+- parser/DOM anomaly: persistent warning until a successful verified scrape occurs
+
+### 7. Logging
+
+Write a rotating local diagnostic log outside the installation directory.
+
+Log:
+
+- source start/end times
+- item counts
+- browser selected
+- Calendar authentication state
+- scraper parser health
+- exceptions/timeouts
+- cache fallback decisions
+
+Never log OAuth tokens, cookies or sensitive browser-profile content.
+
+### 8. Atomic cache writes
+
+Write cache to a temporary file and atomically replace the previous cache only after serialization succeeds.
+
+A crash or forced shutdown must not corrupt the last known-good dataset.
+
+### 9. Source isolation
+
+A scraper timeout must not prevent fresh Calendar API data from becoming available.
+
+Long term, source jobs should be independently timed/observed and merged through a result object rather than one source blocking the entire refresh chain.
+
+### 10. Self-test
+
+The scraper should verify structural assumptions, for example:
+
+- current URL is authenticated Google Calendar
+- month view loaded
+- expected Calendar DOM structure exists
+- task text format is recognized when task elements are present
+
+Failure of a structural assumption is a health failure, not a legitimate zero-task result.
+
+## Reliability Invariant
+
+The application should maintain this invariant:
+
+> Incomplete or unverified fresh data must never overwrite verified useful data without an explicit warning.
+
+This is the core rule for long-term safety.
+
+## Planned Implementation Order
+
+1. Introduce structured `SourceHealth` / `SyncResult`
+2. Add separate scraper cache
+3. Preserve last-known-good scraper tasks on failure
+4. Add zero-result and structural anomaly detection
+5. Update widget status to reflect partial health
+6. Add retry/backoff policy
+7. Add local rotating logs
+8. Add atomic cache writes
+9. Add automated failure-mode tests
+10. Only then treat the installer build as release-ready
+
+============================================================
+FILE: BUILD.md
+============================================================
+
+# Build and Release
+
+## Development Build
+
+From the project root:
+
+```powershell
+python -m PyInstaller `
+    --noconfirm `
+    --clean `
+    --onedir `
+    --console `
+    --name DesktopCalendar `
+    --collect-all playwright `
+    --add-data "credentials.json:." `
+    app.py
+```
+
+Use `--console` while diagnosing startup, OAuth, browser or scraper issues.
+
+Run:
+
+```powershell
+.\dist\DesktopCalendar\DesktopCalendar.exe
+```
+
+## Release Build
+
+After testing is complete:
+
+```powershell
+python -m PyInstaller `
+    --noconfirm `
+    --clean `
+    --onedir `
+    --windowed `
+    --name DesktopCalendar `
+    --collect-all playwright `
+    --add-data "credentials.json:." `
+    app.py
+```
+
+Output:
+
+```text
+dist\DesktopCalendar\
+```
+
+## Clean-Install Test
+
+Before release, test the executable as a new user.
+
+Back up/remove test runtime data and QSettings, then verify:
+
+1. first-run setup appears
+2. Google OAuth completes
+3. Edge/Chrome/Brave selection works
+4. browser Calendar sign-in is verified
+5. setup completes
+6. widget starts
+7. Calendar events/appointments appear
+8. Tasks API tasks appear
+9. scraper-enriched recurring tasks appear
+10. restarting does not repeat setup
+11. normal operation does not show a visible browser
+12. refresh remains responsive
+
+## Installer
+
+The Inno Setup script packages:
+
+```text
+dist\DesktopCalendar\*
+```
+
+into:
+
+```text
+DesktopCalendarSetup.exe
+```
+
+The installer should not contain:
+
+- `token.json`
+- browser profiles
+- cache files
+- personal test data
+
+## OAuth Distribution
+
+A local/test OAuth configuration may require manually registered test users.
+
+For public distribution, configure the Google OAuth application appropriately for external production users and complete any Google verification required for the Calendar/Tasks scopes before advertising the installer publicly.
+
+## Release Gate
+
+Do not consider the application release-ready until the reliability work in `RELIABILITY.md` has been implemented and tested against:
+
+- network failure
+- browser missing
+- browser logged out
+- CDP timeout
+- scraper parser failure
+- unexpected zero scraped tasks
+- stale cache
+- forced process termination during cache write
 
 ============================================================
 FILE: requirements.txt
@@ -603,14 +1137,9 @@ FILE: export_project.ps1
 
 $output = "ai_context.txt"
 
-# XĂ³a file cÅ©
 if (Test-Path $output) {
     Remove-Item $output
 }
-
-# ============================================
-# FOLDERS AI Cáº¦N Äá»ŒC
-# ============================================
 
 $includeFolders = @(
     "controllers",
@@ -620,23 +1149,17 @@ $includeFolders = @(
     "utils"
 )
 
-# ============================================
-# FILE á» ROOT AI Cáº¦N Äá»ŒC
-# ============================================
-
 $includeRootFiles = @(
     "app.py",
-    "config.py",
-    "config.example.json",
     "README.md",
     "ARCHITECTURE.md",
+    "RELIABILITY.md",
+    "BUILD.md",
     "requirements.txt",
-    "export_project.ps1"
+    "export_project.ps1",
+    "DesktopCalendar.iss",
+    "build_installer.ps1"
 )
-
-# ============================================
-# EXTENSIONS ÄÆ¯á»¢C PHĂ‰P
-# ============================================
 
 $allowedExtensions = @(
     ".py",
@@ -650,12 +1173,9 @@ $allowedExtensions = @(
     ".ini",
     ".css",
     ".html",
-    ".js"
+    ".js",
+    ".iss"
 )
-
-# ============================================
-# FILE / FOLDER KHĂ”NG BAO GIá»œ ÄÆ¯A CHO AI
-# ============================================
 
 $excludeNames = @(
     "__pycache__",
@@ -664,10 +1184,14 @@ $excludeNames = @(
     "venv",
     ".idea",
     ".vscode",
+    "build",
+    "dist",
+    "installer_output",
 
+    "BrowserProfiles",
+    "ChromeProfile",
     "chrome_profile",
     "google_calendar_profile",
-    "ChromeProfile",
     "calendar-debug-profile",
 
     "credentials.json",
@@ -680,10 +1204,6 @@ $excludeNames = @(
     "project_dump.txt",
     "ai_context.txt"
 )
-
-# ============================================
-# HEADER
-# ============================================
 
 @"
 ============================================================
@@ -699,180 +1219,89 @@ PRODUCT PURPOSE
 Desktop Calendar is a lightweight Windows desktop calendar
 widget built with PySide6.
 
-The product is NOT intended to replace Google Calendar.
+Its purpose is to let the user glance at the desktop and
+immediately understand what is coming up.
 
-Its primary purpose is:
-
-    Open computer
-        ->
-    glance at the desktop
-        ->
-    immediately understand what is coming up
-
-The widget should minimize the amount of attention, reading,
-clicking and interaction required from the user.
-
-Google Calendar remains the source of truth for creating,
-editing and deleting calendar data.
-
-The desktop widget mainly provides a fast, glanceable,
-read-oriented view of upcoming commitments.
+Google Calendar and Google Tasks remain the source of truth.
 
 ============================================================
-PRODUCT / UX PRINCIPLES
+CURRENT DATA ARCHITECTURE
 ============================================================
 
-1. MINIMIZE COGNITIVE LOAD
+1. Google Calendar API
+   - events and appointments
 
-The user should understand the important information within
-a few seconds.
+2. Google Tasks API
+   - dated task data
 
-Important information:
-- date
-- time
-- event/task title
-- whether the displayed data is up to date
+3. Google Calendar UI scraper
+   - supplements recurring-task occurrences / Calendar-visible
+     task time information that is not equivalently exposed by
+     the Tasks API
 
-Avoid unnecessary text, controls and visual noise.
-
-
-2. GLANCEABILITY FIRST
-
-Primary information must be visible without requiring clicks,
-hovering, opening menus or navigating through screens.
-
-Hover text is appropriate only for secondary controls.
-
-
-3. DO NOT REBUILD GOOGLE CALENDAR
-
-Complex calendar management such as creating, editing,
-deleting events and appointment schedules belongs in
-Google Calendar.
-
-The widget can open Google Calendar when the user needs
-those capabilities.
-
-
-4. QUIET DESKTOP BEHAVIOUR
-
-The application should behave like a desktop widget:
-
-- start automatically with Windows
-- remain visible on the desktop
-- not steal focus unnecessarily
-- not open visible browser windows for background work
-- refresh silently
-- default to a locked position
-
-
-5. FAST STARTUP
-
-Cached events/tasks should be displayed immediately when the
-application starts.
-
-Network synchronisation happens afterwards in the background.
-
-
-6. GRACEFUL FAILURE
-
-Network, Google Calendar or scraper failures should not make
-the widget suddenly empty.
-
-If fresh data cannot be retrieved, continue displaying the
-last successful cached data and show a lightweight status such
-as:
-
-    Warning: Showing saved events - Updated 12 min ago
-
-
-7. SOURCE OF TRUTH
-
-Google Calendar / Google Tasks are the authoritative data
-sources.
-
-Local cache exists only to improve startup speed and
-resilience. It is not an independent calendar database.
-
-
-8. LOW-EFFORT STATUS
-
-Synchronisation state should be understandable at a glance.
-
-Examples:
-
-    Updated just now
-    Updated 3 min ago
-    Warning: Showing saved events - Updated 18 min ago
-
-The user should not need to inspect logs or terminals.
-
-
-9. BACKGROUND IMPLEMENTATION SHOULD BE INVISIBLE
-
-OAuth, Chrome debugging, Playwright scraping, caching and
-network requests are implementation details.
-
-Normal users should not have to manually start Chrome,
-run PowerShell commands, or understand these systems.
-
-
-10. KEEP THE PRODUCT SMALL
-
-Before adding a feature, ask:
-
-    Does this reduce the effort required to understand
-    what is coming up?
-
-If not, it probably does not belong in the always-visible
-widget UI.
+The scraper uses Playwright and an app-owned Chromium browser
+profile (Edge by default; Chrome and Brave are also supported).
 
 ============================================================
-AI COLLABORATION GUIDANCE
+FIRST-RUN SETUP
 ============================================================
 
-When suggesting changes:
+Before the normal widget starts:
 
-- preserve the glanceable-widget philosophy
-- prefer simpler UX over additional features
-- avoid turning the app into a full calendar client
-- keep network/browser work outside the UI thread
-- preserve cached data when refresh fails
-- avoid unnecessary popups
-- avoid adding permanently visible controls for rare actions
-- treat Google Calendar as the management interface
-- prioritize reliability at Windows startup
+1. Google OAuth sign-in for Calendar + Tasks APIs
+2. Choose Edge / Chrome / Brave
+3. Sign in to Google Calendar in the app-owned browser profile
+4. Verify Calendar sign-in
+5. Mark setup complete
 
-Sensitive credentials, browser profiles, caches and generated
-files must never be included in this context or committed to Git.
+Normal browser work is headless after setup.
 
-"@ | Out-File $output -Encoding UTF8
+============================================================
+LOCAL DATA
+============================================================
 
+Per-user runtime data lives under:
 
-# ============================================
-# PROJECT STRUCTURE
-# ============================================
+    %LOCALAPPDATA%\DesktopCalendar\
 
-@"
+including:
+
+- token.json
+- cache.json
+- BrowserProfiles\
+
+Preferences and setup state use Qt QSettings.
+
+Sensitive credentials, OAuth tokens, browser profiles, caches,
+generated build output and personal data must never be included
+in this AI context or committed to Git.
+
+============================================================
+RELIABILITY PRIORITY
+============================================================
+
+The Google Calendar UI scraper is a supplementary, inherently
+less stable integration.
+
+Future reliability hardening must ensure that scraper failure
+cannot silently make the calendar appear complete.
+
+See RELIABILITY.md.
 
 ============================================================
 PROJECT STRUCTURE
 ============================================================
 
-"@ | Out-File $output -Append -Encoding UTF8
-
+"@ | Out-File $output -Encoding UTF8
 
 foreach ($file in $includeRootFiles) {
-
     if (Test-Path $file) {
         "[FILE] $file" |
         Out-File $output -Append -Encoding UTF8
     }
 }
 
-
 foreach ($folder in $includeFolders) {
-
     if (-not (Test-Path $folder)) {
         continue
     }
@@ -882,16 +1311,13 @@ foreach ($folder in $includeFolders) {
 
     Get-ChildItem $folder -Recurse |
     Where-Object {
-
         $item = $_
 
         -not ($excludeNames | Where-Object {
             $item.FullName -match "\\$([regex]::Escape($_))(\\|$)"
         })
-
     } |
     ForEach-Object {
-
         $relative =
             $_.FullName.Substring((Get-Location).Path.Length + 1)
 
@@ -901,18 +1327,11 @@ foreach ($folder in $includeFolders) {
         else {
             "[FILE] $relative"
         }
-
     } |
     Out-File $output -Append -Encoding UTF8
 }
 
-
-# ============================================
-# FUNCTION Äá»‚ DUMP FILE
-# ============================================
-
 function Add-FileToContext {
-
     param (
         [string]$FilePath
     )
@@ -923,9 +1342,7 @@ function Add-FileToContext {
 
     $file = Get-Item $FilePath
 
-    # KhĂ´ng Ä‘á»c file quĂ¡ lá»›n (> 200 KB)
     if ($file.Length -gt 200KB) {
-
         @"
 
 ============================================================
@@ -951,15 +1368,8 @@ FILE: $FilePath
     Out-File $output -Append -Encoding UTF8
 }
 
-
-# ============================================
-# ROOT FILE CONTENTS
-# ============================================
-
 foreach ($file in $includeRootFiles) {
-
     if (Test-Path $file) {
-
         $extension =
             [System.IO.Path]::GetExtension($file).ToLower()
 
@@ -969,20 +1379,13 @@ foreach ($file in $includeRootFiles) {
     }
 }
 
-
-# ============================================
-# SOURCE CODE CONTENTS
-# ============================================
-
 foreach ($folder in $includeFolders) {
-
     if (-not (Test-Path $folder)) {
         continue
     }
 
     Get-ChildItem $folder -Recurse -File |
     Where-Object {
-
         $file = $_
 
         ($allowedExtensions -contains $file.Extension.ToLower()) -and
@@ -990,17 +1393,14 @@ foreach ($folder in $includeFolders) {
         -not ($excludeNames | Where-Object {
             $file.FullName -match "\\$([regex]::Escape($_))(\\|$)"
         })
-
     } |
     ForEach-Object {
-
         $relative =
             $_.FullName.Substring((Get-Location).Path.Length + 1)
 
         Add-FileToContext $relative
     }
 }
-
 
 Write-Host ""
 Write-Host "============================================"
@@ -1014,7 +1414,13 @@ FILE: controllers\calendar_controller.py
 
 from collections.abc import Callable
 
-from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal, Slot
+from PySide6.QtCore import (
+    QObject,
+    QRunnable,
+    QThreadPool,
+    Signal,
+    Slot,
+)
 
 from models.calendar_event import CalendarEvent
 from services.base_calendar import BaseCalendarService
@@ -1027,7 +1433,10 @@ class _WorkerSignals(QObject):
 
 
 class _Worker(QRunnable):
-    def __init__(self, job: Callable[[], object]) -> None:
+    def __init__(
+        self,
+        job: Callable[[], object],
+    ) -> None:
         super().__init__()
         self.job = job
         self.signals = _WorkerSignals()
@@ -1036,20 +1445,30 @@ class _Worker(QRunnable):
     def run(self) -> None:
         try:
             result = self.job()
+
         except Exception as exc:
-            self.signals.error.emit(str(exc))
+            self.signals.error.emit(
+                str(exc)
+            )
+
         else:
-            self.signals.result.emit(result)
+            self.signals.result.emit(
+                result
+            )
+
         finally:
             self.signals.finished.emit()
 
 
 class CalendarController(QObject):
-    """Coordinates UI and services and keeps network work off the UI thread."""
+    """Coordinates UI and services."""
 
     events_updated = Signal(list)
     error = Signal(str)
     busy_changed = Signal(bool)
+
+    # New signal for scraper health.
+    scraper_status_changed = Signal(object)
 
     def __init__(
         self,
@@ -1057,8 +1476,13 @@ class CalendarController(QObject):
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
+
         self.service = service
-        self.thread_pool = QThreadPool.globalInstance()
+
+        self.thread_pool = (
+            QThreadPool.globalInstance()
+        )
+
         self._busy = False
 
     @property
@@ -1071,32 +1495,94 @@ class CalendarController(QObject):
 
         self._set_busy(True)
 
-        worker = _Worker(self.service.get_events)
-        worker.signals.result.connect(self._on_events_loaded)
-        worker.signals.error.connect(self.error.emit)
-        worker.signals.finished.connect(self._finish_task)
-        self.thread_pool.start(worker)
+        worker = _Worker(
+            self.service.get_events
+        )
 
-    def create_event(self, event: CalendarEvent) -> None:
-        self._run_mutation(lambda: self.service.create_event(event))
+        worker.signals.result.connect(
+            self._on_events_loaded
+        )
 
-    def delete_event(self, event_id: str) -> None:
-        self._run_mutation(lambda: self.service.delete_event(event_id))
+        worker.signals.error.connect(
+            self.error.emit
+        )
 
-    def _run_mutation(self, job: Callable[[], object]) -> None:
+        worker.signals.finished.connect(
+            self._finish_task
+        )
+
+        self.thread_pool.start(
+            worker
+        )
+
+    def create_event(
+        self,
+        event: CalendarEvent,
+    ) -> None:
+        self._run_mutation(
+            lambda:
+            self.service.create_event(
+                event
+            )
+        )
+
+    def delete_event(
+        self,
+        event_id: str,
+    ) -> None:
+        self._run_mutation(
+            lambda:
+            self.service.delete_event(
+                event_id
+            )
+        )
+
+    def _run_mutation(
+        self,
+        job: Callable[[], object],
+    ) -> None:
         if self._busy:
             return
 
         self._set_busy(True)
 
         worker = _Worker(job)
-        worker.signals.error.connect(self.error.emit)
-        worker.signals.finished.connect(self._finish_mutation)
-        self.thread_pool.start(worker)
+
+        worker.signals.error.connect(
+            self.error.emit
+        )
+
+        worker.signals.finished.connect(
+            self._finish_mutation
+        )
+
+        self.thread_pool.start(
+            worker
+        )
 
     @Slot(object)
-    def _on_events_loaded(self, result: object) -> None:
-        self.events_updated.emit(list(result))
+    def _on_events_loaded(
+        self,
+        result: object,
+    ) -> None:
+        self.events_updated.emit(
+            list(result)
+        )
+
+        # Get scraper health if the current
+        # service supports it.
+        get_status = getattr(
+            self.service,
+            "get_scraper_status",
+            None,
+        )
+
+        if callable(get_status):
+            status = get_status()
+
+            self.scraper_status_changed.emit(
+                status
+            )
 
     @Slot()
     def _finish_mutation(self) -> None:
@@ -1107,12 +1593,18 @@ class CalendarController(QObject):
     def _finish_task(self) -> None:
         self._set_busy(False)
 
-    def _set_busy(self, value: bool) -> None:
+    def _set_busy(
+        self,
+        value: bool,
+    ) -> None:
         if self._busy == value:
             return
 
         self._busy = value
-        self.busy_changed.emit(value)
+
+        self.busy_changed.emit(
+            value
+        )
 
 ============================================================
 FILE: controllers\__init__.py
@@ -1236,6 +1728,8 @@ class BaseCalendarService(ABC):
 FILE: services\chrome_calendar_session.py
 ============================================================
 
+from __future__ import annotations
+
 import os
 import shutil
 import subprocess
@@ -1244,134 +1738,405 @@ from pathlib import Path
 
 import requests
 
+from utils.app_settings import AppSettings
 
-CDP_URL = "http://127.0.0.1:9222"
 
-CHROME_PATH = Path(
-    r"C:\Program Files\Google\Chrome\Application\chrome.exe"
+CDP_PORT = 9222
+CDP_URL = f"http://127.0.0.1:{CDP_PORT}"
+
+CALENDAR_URL = (
+    "https://calendar.google.com/calendar/u/0/r"
 )
 
-# Profile má»›i: lÆ°u bá»n trong AppData
-PROFILE_DIR = (
+APP_DATA_DIR = (
     Path(os.environ["LOCALAPPDATA"])
     / "DesktopCalendar"
+)
+
+BROWSER_PROFILES_DIR = (
+    APP_DATA_DIR
+    / "BrowserProfiles"
+)
+
+LEGACY_CHROME_PROFILE_DIR = (
+    APP_DATA_DIR
     / "ChromeProfile"
 )
 
-# Profile cÅ© trong TEMP
-OLD_PROFILE_DIR = (
-    Path(os.environ["TEMP"])
+OLD_TEMP_PROFILE_DIR = (
+    Path(os.environ.get("TEMP", ""))
     / "calendar-debug-profile"
 )
 
+BROWSER_NAMES = {
+    "edge": "Microsoft Edge",
+    "chrome": "Google Chrome",
+    "brave": "Brave",
+}
 
-def chrome_debugging_running() -> bool:
+
+def _candidate_paths(
+    browser: str,
+) -> list[Path]:
+    local_app_data = Path(
+        os.environ.get(
+            "LOCALAPPDATA",
+            "",
+        )
+    )
+    program_files = Path(
+        os.environ.get(
+            "PROGRAMFILES",
+            r"C:\Program Files",
+        )
+    )
+    program_files_x86 = Path(
+        os.environ.get(
+            "PROGRAMFILES(X86)",
+            r"C:\Program Files (x86)",
+        )
+    )
+
+    if browser == "edge":
+        return [
+            program_files_x86
+            / "Microsoft"
+            / "Edge"
+            / "Application"
+            / "msedge.exe",
+            program_files
+            / "Microsoft"
+            / "Edge"
+            / "Application"
+            / "msedge.exe",
+            local_app_data
+            / "Microsoft"
+            / "Edge"
+            / "Application"
+            / "msedge.exe",
+        ]
+
+    if browser == "chrome":
+        return [
+            program_files
+            / "Google"
+            / "Chrome"
+            / "Application"
+            / "chrome.exe",
+            program_files_x86
+            / "Google"
+            / "Chrome"
+            / "Application"
+            / "chrome.exe",
+            local_app_data
+            / "Google"
+            / "Chrome"
+            / "Application"
+            / "chrome.exe",
+        ]
+
+    if browser == "brave":
+        return [
+            program_files
+            / "BraveSoftware"
+            / "Brave-Browser"
+            / "Application"
+            / "brave.exe",
+            program_files_x86
+            / "BraveSoftware"
+            / "Brave-Browser"
+            / "Application"
+            / "brave.exe",
+            local_app_data
+            / "BraveSoftware"
+            / "Brave-Browser"
+            / "Application"
+            / "brave.exe",
+        ]
+
+    return []
+
+
+def find_browser_executable(
+    browser: str,
+) -> Path | None:
+    browser = browser.lower()
+
+    for path in _candidate_paths(
+        browser
+    ):
+        if path.exists():
+            return path
+
+    return None
+
+
+def browser_display_name(
+    browser: str,
+) -> str:
+    return BROWSER_NAMES.get(
+        browser.lower(),
+        browser.title(),
+    )
+
+
+def browser_debugging_running() -> bool:
     try:
         response = requests.get(
             f"{CDP_URL}/json/version",
             timeout=1,
         )
         return response.ok
-
     except requests.RequestException:
         return False
 
 
-def migrate_old_profile() -> None:
-    """
-    Move the old TEMP Chrome profile into LOCALAPPDATA.
+def chrome_debugging_running() -> bool:
+    """Compatibility name retained for older code."""
+    return browser_debugging_running()
 
-    This preserves the existing Google login/session.
-    """
 
-    if PROFILE_DIR.exists():
+def calendar_browser_signed_in() -> bool:
+    """Return True when the app-owned browser has an open Calendar page."""
+
+    if not browser_debugging_running():
+        return False
+
+    try:
+        response = requests.get(
+            f"{CDP_URL}/json",
+            timeout=2,
+        )
+        response.raise_for_status()
+        targets = response.json()
+    except (requests.RequestException, ValueError):
+        return False
+
+    for target in targets:
+        url = str(
+            target.get(
+                "url",
+                "",
+            )
+        ).lower()
+
+        if (
+            "calendar.google.com" in url
+            and "accounts.google.com" not in url
+        ):
+            return True
+
+    return False
+
+
+def _new_profile_dir(
+    browser: str,
+) -> Path:
+    return (
+        BROWSER_PROFILES_DIR
+        / browser.lower()
+    )
+
+
+def profile_dir_for_browser(
+    browser: str,
+) -> Path:
+    browser = browser.lower()
+
+    if (
+        browser == "chrome"
+        and LEGACY_CHROME_PROFILE_DIR.exists()
+        and not _new_profile_dir("chrome").exists()
+    ):
+        return LEGACY_CHROME_PROFILE_DIR
+
+    return _new_profile_dir(
+        browser
+    )
+
+
+def _migrate_very_old_chrome_profile() -> None:
+    if (
+        not OLD_TEMP_PROFILE_DIR.exists()
+        or LEGACY_CHROME_PROFILE_DIR.exists()
+        or _new_profile_dir("chrome").exists()
+    ):
         return
 
-    if OLD_PROFILE_DIR.exists():
-        PROFILE_DIR.parent.mkdir(
-            parents=True,
-            exist_ok=True,
-        )
-
-        try:
-            shutil.move(
-                str(OLD_PROFILE_DIR),
-                str(PROFILE_DIR),
-            )
-
-            print(
-                "Chrome profile migrated to:",
-                PROFILE_DIR,
-            )
-
-        except Exception as exc:
-            print(
-                "Could not migrate old Chrome profile:",
-                exc,
-            )
-
-    else:
-        PROFILE_DIR.mkdir(
-            parents=True,
-            exist_ok=True,
-        )
-
-
-def ensure_calendar_chrome() -> None:
-    """
-    Ensure Chrome is running with remote debugging.
-
-    Uses a persistent Chrome profile so Google login
-    survives across app restarts.
-    """
-
-    if chrome_debugging_running():
-        return
-
-    if not CHROME_PATH.exists():
-        raise FileNotFoundError(
-            f"Google Chrome not found at: {CHROME_PATH}"
-        )
-
-    migrate_old_profile()
-
-    PROFILE_DIR.mkdir(
+    LEGACY_CHROME_PROFILE_DIR.parent.mkdir(
         parents=True,
         exist_ok=True,
     )
 
+    try:
+        shutil.move(
+            str(OLD_TEMP_PROFILE_DIR),
+            str(LEGACY_CHROME_PROFILE_DIR),
+        )
+    except Exception as exc:
+        print(
+            "Could not migrate old Chrome profile:",
+            exc,
+        )
+
+
+def migrate_old_profile() -> None:
+    _migrate_very_old_chrome_profile()
+
+
+def selected_browser() -> str:
+    return AppSettings().get_browser()
+
+
+def launch_calendar_browser(
+    browser: str | None = None,
+    *,
+    headless: bool,
+) -> None:
+    """Launch the chosen Chromium browser using an app-owned profile."""
+
+    browser = (
+        browser
+        or selected_browser()
+    ).lower()
+
+    if browser not in AppSettings.BROWSER_OPTIONS:
+        browser = AppSettings.DEFAULT_BROWSER
+
+    if browser_debugging_running():
+        return
+
+    if browser == "chrome":
+        _migrate_very_old_chrome_profile()
+
+    executable = find_browser_executable(
+        browser
+    )
+
+    if executable is None:
+        raise FileNotFoundError(
+            f"{browser_display_name(browser)} was not found. "
+            "Install it or choose another browser in Desktop Calendar Settings."
+        )
+
+    profile_dir = profile_dir_for_browser(
+        browser
+    )
+    profile_dir.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    arguments = [
+        str(executable),
+        f"--remote-debugging-port={CDP_PORT}",
+        f"--user-data-dir={profile_dir}",
+        "--disable-gpu",
+        "--no-first-run",
+        "--no-default-browser-check",
+    ]
+
+    if headless:
+        arguments.extend(
+            [
+                "--headless=new",
+                "--window-size=1600,1200",
+            ]
+        )
+
+    arguments.append(
+        CALENDAR_URL
+    )
+
     subprocess.Popen(
-        [
-            str(CHROME_PATH),
-
-            # Chrome cháº¡y hoĂ n toĂ n ná»n
-            "--headless=new",
-
-            "--remote-debugging-port=9222",
-
-            f"--user-data-dir={PROFILE_DIR}",
-
-            "--disable-gpu",
-
-            "--no-first-run",
-            "--no-default-browser-check",
-
-            "https://calendar.google.com/calendar/u/0/r",
-        ],
+        arguments,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
 
-    # Wait for Chrome's CDP server
-    for _ in range(30):
-        if chrome_debugging_running():
+    for _ in range(40):
+        if browser_debugging_running():
             return
 
         time.sleep(0.5)
 
     raise RuntimeError(
-        "Chrome started but remote debugging "
-        "port 9222 did not become available."
+        f"{browser_display_name(browser)} started, "
+        f"but remote debugging port {CDP_PORT} did not become available."
+    )
+
+
+def stop_calendar_browser() -> None:
+    """Stop only the browser process owned by Desktop Calendar."""
+
+    if not browser_debugging_running():
+        return
+
+    powershell_command = f"""
+    Get-CimInstance Win32_Process |
+    Where-Object {{
+        $_.CommandLine -and
+        $_.CommandLine -like '*--remote-debugging-port={CDP_PORT}*' -and
+        $_.CommandLine -like '*DesktopCalendar*'
+    }} |
+    ForEach-Object {{
+        Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+    }}
+    """
+
+    creation_flags = getattr(
+        subprocess,
+        "CREATE_NO_WINDOW",
+        0,
+    )
+
+    subprocess.run(
+        [
+            "powershell.exe",
+            "-NoProfile",
+            "-WindowStyle",
+            "Hidden",
+            "-Command",
+            powershell_command,
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        creationflags=creation_flags,
+        check=False,
+    )
+
+    for _ in range(30):
+        if not browser_debugging_running():
+            return
+
+        time.sleep(0.2)
+
+    raise RuntimeError(
+        "Desktop Calendar could not stop its background browser."
+    )
+
+
+def open_calendar_browser_for_login(
+    browser: str,
+) -> None:
+    """Switch the app-owned browser from headless mode to visible sign-in."""
+
+    browser = browser.lower()
+
+    stop_calendar_browser()
+
+    launch_calendar_browser(
+        browser,
+        headless=False,
+    )
+
+
+def ensure_calendar_chrome() -> None:
+    """Ensure the selected browser is available for the existing scraper."""
+
+    launch_calendar_browser(
+        selected_browser(),
+        headless=True,
     )
 
 ============================================================
@@ -1380,10 +2145,16 @@ FILE: services\combined_calendar.py
 
 from datetime import date, datetime
 
-from services.google_calendar import GoogleCalendarService
-from services.google_calendar_api import GoogleCalendarApiService
-from services.google_calendar_scraper import GoogleCalendarScraperService
-from services.google_tasks import GoogleTasksService
+from services.scraper_cache import ScraperCache
+from services.google_calendar_api import (
+    GoogleCalendarApiService,
+)
+from services.google_calendar_scraper import (
+    GoogleCalendarScraperService,
+)
+from services.google_tasks import (
+    GoogleTasksService,
+)
 
 
 def month_start(value: date) -> date:
@@ -1404,6 +2175,7 @@ def add_months(
         - 1
         + months
     )
+
     year, month_zero = divmod(
         month_index,
         12,
@@ -1417,39 +2189,46 @@ def add_months(
 
 
 class CombinedCalendarService:
-    """Aggregates everything the widget needs for its visible date range."""
+    """Aggregates everything the widget needs."""
 
     MONTHS_BACK = 1
     MONTHS_FORWARD = 2
 
     def __init__(self):
-        self.calendar_service = (
-            GoogleCalendarService()
-        )
         self.tasks_service = (
             GoogleTasksService()
         )
+
         self.scraper_service = (
             GoogleCalendarScraperService()
         )
+
+        self.scraper_cache = (
+            ScraperCache()
+        )
+
         self.calendar_api = (
             GoogleCalendarApiService()
         )
+
+        self.scraper_status = "unknown"
+        self.scraper_error = None
 
     def get_events(
         self,
         days_ahead=None,
     ):
-        # The right panel still decides whether it shows 7/14/30 days.
-        # The service loads the four months needed by the left calendar:
-        # previous month + current month + next two months.
         today = datetime.now().date()
-        current_month = month_start(today)
+
+        current_month = month_start(
+            today
+        )
 
         start_date = add_months(
             current_month,
             -self.MONTHS_BACK,
         )
+
         end_date = add_months(
             current_month,
             self.MONTHS_FORWARD + 1,
@@ -1465,13 +2244,21 @@ class CombinedCalendarService:
         start_date: date,
         end_date: date,
     ):
+        # ============================================================
+        # GOOGLE CALENDAR API
+        # ============================================================
+
         events = (
-            self.calendar_service
+            self.calendar_api
             .get_events_between(
                 start_date,
                 end_date,
             )
         )
+
+        # ============================================================
+        # GOOGLE TASKS API
+        # ============================================================
 
         try:
             api_tasks = (
@@ -1481,27 +2268,53 @@ class CombinedCalendarService:
                     end_date,
                 )
             )
+
         except Exception as exc:
             print(
                 "Google Tasks API error:",
-                exc,
+                repr(exc),
             )
+
             api_tasks = []
+
+        # ============================================================
+        # GOOGLE CALENDAR SCRAPER
+        # ============================================================
 
         try:
             scraped_tasks = (
-                self.scraper_service
-                .get_tasks_between(
+                self._get_scraper_tasks_safely(
                     start_date,
                     end_date,
                 )
             )
+
         except Exception as exc:
+            self.scraper_status = "cached"
+            self.scraper_error = str(exc)
+
             print(
                 "Task scraper error:",
-                exc,
+                repr(exc),
             )
-            scraped_tasks = []
+
+            scraped_tasks = (
+                self._get_cached_tasks_between(
+                    start_date,
+                    end_date,
+                )
+            )
+
+            print(
+                "Using last-known-good "
+                "scraper cache:",
+                len(scraped_tasks),
+                "tasks",
+            )
+
+        # ============================================================
+        # MERGE SOURCES
+        # ============================================================
 
         items = {}
 
@@ -1510,14 +2323,15 @@ class CombinedCalendarService:
                 self._item_key(event)
             ] = event
 
-        # API task first: this gives us coverage, including previous-month
-        # completed tasks. The scraper then replaces matching task/date pairs
-        # when it has richer time information from Calendar's UI.
+        # Tasks API first.
         for task in api_tasks:
             items[
                 self._item_key(task)
             ] = task
 
+        # Scraper/cache last because it may
+        # contain recurring occurrences and
+        # richer Calendar UI information.
         for task in scraped_tasks:
             items[
                 self._item_key(task)
@@ -1526,16 +2340,203 @@ class CombinedCalendarService:
         result = list(
             items.values()
         )
+
         result.sort(
-            key=lambda item: item.sort_key()
+            key=lambda item: (
+                item.sort_key()
+            )
         )
+
         return result
 
-    def _item_key(self, item):
+    # ================================================================
+    # SCRAPER RELIABILITY
+    # ================================================================
+
+    def _get_scraper_tasks_safely(
+        self,
+        start_date: date,
+        end_date: date,
+    ):
+        cached_tasks = (
+            self._get_cached_tasks_between(
+                start_date,
+                end_date,
+            )
+        )
+
+        # First normal scrape.
+        scraped_tasks = (
+            self.scraper_service
+            .get_tasks_between(
+                start_date,
+                end_date,
+            )
+        )
+
+        # ------------------------------------------------------------
+        # Normal case: scraper found tasks.
+        # ------------------------------------------------------------
+
+        if scraped_tasks:
+            self._accept_scraper_result(
+                scraped_tasks
+            )
+
+            return scraped_tasks
+
+        # ------------------------------------------------------------
+        # Empty result is perfectly valid if the
+        # previous cache for the same range was
+        # also empty.
+        # ------------------------------------------------------------
+
+        if not cached_tasks:
+            self._accept_scraper_result(
+                scraped_tasks
+            )
+
+            return scraped_tasks
+
+        # ------------------------------------------------------------
+        # Suspicious case:
+        #
+        # Previous known-good scraper data had
+        # tasks, but fresh scrape suddenly found
+        # absolutely nothing.
+        #
+        # Do not trust it immediately.
+        # ------------------------------------------------------------
+
+        print(
+            "SCRAPER ANOMALY: fresh result "
+            "contains 0 tasks but cache has",
+            len(cached_tasks),
+            "tasks. Retrying...",
+        )
+
+        # Second independent scrape.
+        retry_tasks = (
+            self.scraper_service
+            .get_tasks_between(
+                start_date,
+                end_date,
+            )
+        )
+
+        # If retry finds something, the first
+        # zero was probably a transient render
+        # problem.
+        if retry_tasks:
+            print(
+                "SCRAPER ANOMALY RECOVERED:",
+                len(retry_tasks),
+                "tasks found on retry.",
+            )
+
+            self._accept_scraper_result(
+                retry_tasks
+            )
+
+            return retry_tasks
+
+        # Both attempts returned zero while
+        # known-good cache contains data.
+        #
+        # We cannot prove whether the user really
+        # deleted every task or Google changed the
+        # UI, so protect known-good data and warn.
+        reason = (
+            "Scraper returned 0 tasks twice, "
+            "but last-known-good cache contains "
+            f"{len(cached_tasks)} tasks. "
+            "Fresh empty data was not trusted."
+        )
+
+        try:
+            self.scraper_service.save_diagnostics_between(
+                start_date,
+                end_date,
+                reason,
+            )
+        except Exception as diagnostic_exc:
+            print(
+                "Could not save anomaly diagnostic:",
+                repr(diagnostic_exc),
+            )
+
+        raise RuntimeError(reason)
+
+    def _accept_scraper_result(
+        self,
+        scraped_tasks,
+    ) -> None:
+        self.scraper_cache.save(
+            scraped_tasks
+        )
+
+        self.scraper_status = (
+            "healthy"
+        )
+
+        self.scraper_error = None
+
+        print(
+            "Scraper successful. "
+            "Cache updated:",
+            len(scraped_tasks),
+            "tasks",
+        )
+
+    def _get_cached_tasks_between(
+        self,
+        start_date: date,
+        end_date: date,
+    ):
+        cached_tasks = (
+            self.scraper_cache.load()
+        )
+
+        return self._filter_tasks_between(
+            cached_tasks,
+            start_date,
+            end_date,
+        )
+
+    # ================================================================
+    # FILTERING
+    # ================================================================
+
+    def _filter_tasks_between(
+        self,
+        tasks,
+        start_date: date,
+        end_date: date,
+    ):
+        return [
+            task
+            for task in tasks
+            if (
+                start_date
+                <= task.event_date
+                < end_date
+            )
+        ]
+
+    # ================================================================
+    # MERGE KEYS
+    # ================================================================
+
+    def _item_key(
+        self,
+        item,
+    ):
         if item.item_type == "task":
             return (
                 "task",
-                item.summary.strip().lower(),
+                item.summary
+                .strip()
+                .lower(),
                 item.event_date,
             )
 
@@ -1547,32 +2548,68 @@ class CombinedCalendarService:
             )
 
         start_time = (
-            item.start.strftime("%H:%M")
-            if isinstance(item.start, datetime)
+            item.start.strftime(
+                "%H:%M"
+            )
+            if isinstance(
+                item.start,
+                datetime,
+            )
             else "ALL_DAY"
         )
+
         end_time = (
-            item.end.strftime("%H:%M")
-            if isinstance(item.end, datetime)
+            item.end.strftime(
+                "%H:%M"
+            )
+            if isinstance(
+                item.end,
+                datetime,
+            )
             else ""
         )
 
         return (
             "event",
-            item.summary.strip().lower(),
+            item.summary
+            .strip()
+            .lower(),
             item.event_date,
             start_time,
             end_time,
         )
 
-    def create_event(self, event):
+    # ================================================================
+    # STATUS
+    # ================================================================
+
+    def get_scraper_status(
+        self,
+    ):
+        return {
+            "status":
+                self.scraper_status,
+            "error":
+                self.scraper_error,
+        }
+
+    # ================================================================
+    # CREATE EVENT
+    # ================================================================
+
+    def create_event(
+        self,
+        event,
+    ):
         if event.item_type == "task":
-            return self.tasks_service.create_task(
-                event
+            return (
+                self.tasks_service
+                .create_task(event)
             )
 
-        return self.calendar_api.create_event(
-            event
+        return (
+            self.calendar_api
+            .create_event(event)
         )
 
 ============================================================
@@ -1784,6 +2821,10 @@ class EventCache:
 FILE: services\google_auth.py
 ============================================================
 
+from __future__ import annotations
+
+import os
+import sys
 from pathlib import Path
 
 from google.auth.transport.requests import Request
@@ -1791,10 +2832,17 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 
 
-BASE_DIR = Path(__file__).resolve().parent.parent
+APP_DATA_DIR = (
+    Path(os.environ["LOCALAPPDATA"])
+    / "DesktopCalendar"
+)
 
-CREDENTIALS_FILE = BASE_DIR / "credentials.json"
-TOKEN_FILE = BASE_DIR / "token.json"
+APP_DATA_DIR.mkdir(
+    parents=True,
+    exist_ok=True,
+)
+
+TOKEN_FILE = APP_DATA_DIR / "token.json"
 
 SCOPES = [
     "https://www.googleapis.com/auth/calendar",
@@ -1802,7 +2850,33 @@ SCOPES = [
 ]
 
 
-def get_google_credentials():
+def _credentials_file() -> Path:
+    """Return bundled OAuth client credentials in source or PyInstaller."""
+
+    if getattr(sys, "frozen", False):
+        base_dir = Path(
+            getattr(
+                sys,
+                "_MEIPASS",
+                Path(sys.executable).parent,
+            )
+        )
+    else:
+        base_dir = (
+            Path(__file__)
+            .resolve()
+            .parent
+            .parent
+        )
+
+    return base_dir / "credentials.json"
+
+
+def google_token_exists() -> bool:
+    return TOKEN_FILE.exists()
+
+
+def get_google_credentials() -> Credentials:
     credentials = None
 
     if TOKEN_FILE.exists():
@@ -1811,18 +2885,40 @@ def get_google_credentials():
             SCOPES,
         )
 
-    if not credentials or not credentials.valid:
+    if (
+        not credentials
+        or not credentials.valid
+    ):
+        if (
+            credentials
+            and credentials.expired
+            and credentials.refresh_token
+        ):
+            try:
+                credentials.refresh(
+                    Request()
+                )
+            except Exception:
+                # If the saved grant has been revoked, perform a fresh OAuth
+                # sign-in instead of leaving the application unusable.
+                credentials = None
 
-        if credentials and credentials.expired and credentials.refresh_token:
-            credentials.refresh(Request())
+        if not credentials or not credentials.valid:
+            credentials_file = _credentials_file()
 
-        else:
+            if not credentials_file.exists():
+                raise FileNotFoundError(
+                    "Google OAuth credentials were not found."
+                )
+
             flow = InstalledAppFlow.from_client_secrets_file(
-                CREDENTIALS_FILE,
+                credentials_file,
                 SCOPES,
             )
 
-            credentials = flow.run_local_server(port=0)
+            credentials = flow.run_local_server(
+                port=0
+            )
 
         TOKEN_FILE.write_text(
             credentials.to_json(),
@@ -2082,7 +3178,7 @@ class GoogleCalendarService(BaseCalendarService):
 FILE: services\google_calendar_api.py
 ============================================================
 
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 
 from googleapiclient.discovery import build
 
@@ -2102,35 +3198,220 @@ class GoogleCalendarApiService:
             credentials=credentials,
         )
 
-    def create_event(self, event: CalendarEvent):
+    def get_events_between(
+        self,
+        start_date: date,
+        end_date: date,
+    ) -> list[CalendarEvent]:
+
+        if end_date <= start_date:
+            return []
+
+        tzinfo = datetime.now().astimezone().tzinfo
+
+        time_min = datetime.combine(
+            start_date,
+            time.min,
+            tzinfo=tzinfo,
+        ).isoformat()
+
+        time_max = datetime.combine(
+            end_date,
+            time.min,
+            tzinfo=tzinfo,
+        ).isoformat()
+
+        events = []
+        page_token = None
+
+        while True:
+            response = (
+                self.service.events()
+                .list(
+                    calendarId="primary",
+                    timeMin=time_min,
+                    timeMax=time_max,
+                    singleEvents=True,
+                    orderBy="startTime",
+                    maxResults=2500,
+                    pageToken=page_token,
+                )
+                .execute()
+            )
+
+            for item in response.get("items", []):
+                events.append(
+                    self._to_calendar_event(item)
+                )
+
+            page_token = response.get(
+                "nextPageToken"
+            )
+
+            if not page_token:
+                break
+
+        events.sort(
+            key=lambda event: event.sort_key()
+        )
+
+        return events
+
+    def _to_calendar_event(
+        self,
+        item: dict,
+    ) -> CalendarEvent:
+
+        start_data = item.get("start", {})
+        end_data = item.get("end", {})
+
+        if "dateTime" in start_data:
+            start = datetime.fromisoformat(
+                start_data["dateTime"].replace(
+                    "Z",
+                    "+00:00",
+                )
+            ).astimezone()
+
+            end = None
+
+            if "dateTime" in end_data:
+                end = datetime.fromisoformat(
+                    end_data["dateTime"].replace(
+                        "Z",
+                        "+00:00",
+                    )
+                ).astimezone()
+
+        else:
+            start = date.fromisoformat(
+                start_data["date"]
+            )
+
+            end = (
+                date.fromisoformat(end_data["date"])
+                if "date" in end_data
+                else None
+            )
+
+        organizer_data = item.get(
+            "organizer",
+            {},
+        )
+
+        organizer = organizer_data.get(
+            "email",
+            "",
+        )
+
+        attendees = [
+            attendee.get("email", "")
+            for attendee in item.get(
+                "attendees",
+                [],
+            )
+            if attendee.get("email")
+        ]
+
+        reminders = []
+
+        reminder_data = item.get(
+            "reminders",
+            {},
+        )
+
+        for reminder in reminder_data.get(
+            "overrides",
+            [],
+        ):
+            minutes = reminder.get(
+                "minutes"
+            )
+
+            if minutes is not None:
+                reminders.append(
+                    f"{minutes} minutes before"
+                )
+
+        return CalendarEvent(
+            event_id=item.get("id"),
+            summary=item.get(
+                "summary",
+                "Untitled",
+            ),
+            start=start,
+            end=end,
+            location=item.get(
+                "location",
+                "",
+            ),
+            description=item.get(
+                "description",
+                "",
+            ),
+            recurrence=item.get(
+                "recurrence",
+                [],
+            ),
+            url=item.get(
+                "htmlLink",
+                "",
+            ),
+            organizer=organizer,
+            attendees=attendees,
+            reminders=reminders,
+            item_type="event",
+        )
+
+    def create_event(
+        self,
+        event: CalendarEvent,
+    ):
         body = {
             "summary": event.summary,
             "description": event.description,
             "location": event.location,
         }
 
-        if isinstance(event.start, datetime):
+        if isinstance(
+            event.start,
+            datetime,
+        ):
             end = event.end
 
-            if not isinstance(end, datetime):
-                end = event.start + timedelta(hours=1)
+            if not isinstance(
+                end,
+                datetime,
+            ):
+                end = (
+                    event.start
+                    + timedelta(hours=1)
+                )
 
             body["start"] = {
-                "dateTime": event.start.astimezone().isoformat()
+                "dateTime":
+                    event.start
+                    .astimezone()
+                    .isoformat()
             }
 
             body["end"] = {
-                "dateTime": end.astimezone().isoformat()
+                "dateTime":
+                    end
+                    .astimezone()
+                    .isoformat()
             }
 
         else:
             body["start"] = {
-                "date": event.start.isoformat()
+                "date":
+                    event.start.isoformat()
             }
 
             body["end"] = {
                 "date": (
-                    event.start + timedelta(days=1)
+                    event.start
+                    + timedelta(days=1)
                 ).isoformat()
             }
 
@@ -2151,8 +3432,12 @@ class GoogleCalendarApiService:
 FILE: services\google_calendar_scraper.py
 ============================================================
 
+import json
+import os
 import re
+
 from datetime import date, datetime
+from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
@@ -2175,6 +3460,12 @@ CALENDAR_URL = (
 )
 
 
+class ScraperStructureError(RuntimeError):
+    """Raised when Google Calendar's task structure looks incompatible."""
+
+    pass
+
+
 def parse_time(value: str):
     normalized = (
         value.strip()
@@ -2184,9 +3475,11 @@ def parse_time(value: str):
 
     return datetime.strptime(
         normalized,
-        "%I:%M%p"
-        if ":" in normalized
-        else "%I%p",
+        (
+            "%I:%M%p"
+            if ":" in normalized
+            else "%I%p"
+        ),
     ).time()
 
 
@@ -2208,6 +3501,7 @@ def add_months(
         - 1
         + months
     )
+
     year, month_zero = divmod(
         month_index,
         12,
@@ -2221,24 +3515,24 @@ def add_months(
 
 
 class GoogleCalendarScraperService:
-    """Reads task cards from the Google Calendar month UI.
+    """Reads task cards from the Google Calendar month UI."""
 
-    Google Tasks API is still used as a fallback/source of dated tasks.
-    This scraper mainly enriches tasks with the time shown in Calendar.
-    """
-
-    PAGE_SETTLE_MS = 1800
+    PAGE_SETTLE_MS = 2200
+    MAX_ATTEMPTS = 2
 
     def get_tasks(
         self,
         days_ahead: int = 14,
     ) -> list[CalendarEvent]:
-        today = datetime.now().date()
         from datetime import timedelta
+
+        today = datetime.now().date()
 
         return self.get_tasks_between(
             today,
-            today + timedelta(days=days_ahead),
+            today + timedelta(
+                days=days_ahead
+            ),
         )
 
     def get_tasks_between(
@@ -2246,6 +3540,7 @@ class GoogleCalendarScraperService:
         start_date: date,
         end_date: date,
     ) -> list[CalendarEvent]:
+
         if end_date <= start_date:
             return []
 
@@ -2259,6 +3554,7 @@ class GoogleCalendarScraperService:
         first_month = month_start(
             start_date
         )
+
         last_month = month_start(
             end_date
         )
@@ -2270,8 +3566,11 @@ class GoogleCalendarScraperService:
             )
 
         with sync_playwright() as p:
-            browser = p.chromium.connect_over_cdp(
-                "http://127.0.0.1:9222"
+            browser = (
+                p.chromium.connect_over_cdp(
+                    "http://127.0.0.1:9222",
+                    timeout=10_000,
+                )
             )
 
             context = browser.contexts[0]
@@ -2293,24 +3592,260 @@ class GoogleCalendarScraperService:
             current_month = first_month
 
             try:
-                while current_month <= last_month:
-                    self._open_month(
-                        page,
-                        current_month,
+                while (
+                    current_month
+                    <= last_month
+                ):
+                    scraped_tasks = (
+                        self._scrape_month_with_retry(
+                            page,
+                            current_month,
+                            start_date,
+                            end_date,
+                        )
                     )
 
-                    for task in self._scrape_visible_tasks(
-                        page,
-                        start_date,
-                        end_date,
-                    ):
+                    for task in scraped_tasks:
                         key = (
                             task.summary
                             .strip()
                             .lower(),
                             task.event_date,
                         )
+
                         results[key] = task
+
+                    current_month = (
+                        add_months(
+                            current_month,
+                            1,
+                        )
+                    )
+
+            finally:
+                today = (
+                    datetime.now()
+                    .date()
+                )
+
+                try:
+                    self._open_month(
+                        page,
+                        month_start(
+                            today
+                        ),
+                        wait=False,
+                    )
+
+                except Exception:
+                    pass
+
+        output = list(
+            results.values()
+        )
+
+        output.sort(
+            key=lambda item:
+                item.sort_key()
+        )
+
+        return output
+
+    def _scrape_month_with_retry(
+        self,
+        page,
+        current_month: date,
+        start_date: date,
+        end_date: date,
+    ) -> list[CalendarEvent]:
+
+        last_health = None
+
+        for attempt in range(
+            1,
+            self.MAX_ATTEMPTS + 1,
+        ):
+            try:
+                self._open_month(
+                    page,
+                    current_month,
+                )
+
+                if (
+                    "accounts.google.com"
+                    in page.url
+                ):
+                    raise RuntimeError(
+                        "Google Calendar browser "
+                        "is not signed in. "
+                        "Open Settings and sign in "
+                        "to Google Calendar."
+                    )
+
+                (
+                    scraped_tasks,
+                    health,
+                ) = (
+                    self._scrape_visible_tasks(
+                        page,
+                        start_date,
+                        end_date,
+                    )
+                )
+
+                last_health = health
+
+                # Google still exposes something
+                # beginning with "task:", but the
+                # text no longer follows the format
+                # understood by TASK_PATTERN.
+                if (
+                    health[
+                        "parse_failures"
+                    ]
+                    > 0
+                ):
+                    raise (
+                        ScraperStructureError(
+                            "Task accessibility "
+                            "text was found but "
+                            "its format could not "
+                            "be parsed."
+                        )
+                    )
+
+                return scraped_tasks
+
+            except (
+                ScraperStructureError
+            ) as exc:
+
+                print(
+                    f"SCRAPER WARNING "
+                    f"{current_month:%Y-%m} "
+                    f"attempt "
+                    f"{attempt}/"
+                    f"{self.MAX_ATTEMPTS}:",
+                    exc,
+                )
+
+                # Only create the diagnostic
+                # snapshot if the retry also
+                # failed.
+                if (
+                    attempt
+                    == self.MAX_ATTEMPTS
+                ):
+                    self._save_diagnostic_snapshot(
+                        page=page,
+                        current_month=current_month,
+                        reason=str(exc),
+                        health=last_health,
+                    )
+
+                    raise
+
+                # Give transient rendering
+                # problems one more chance.
+                page.reload(
+                    wait_until=(
+                        "domcontentloaded"
+                    ),
+                    timeout=15_000,
+                )
+
+                page.wait_for_timeout(
+                    2500
+                )
+
+        return []
+    
+    def save_diagnostics_between(
+        self,
+        start_date: date,
+        end_date: date,
+        reason: str,
+    ) -> None:
+        """Save diagnostics for every month in a suspicious range."""
+
+        if end_date <= start_date:
+            return
+
+        ensure_calendar_chrome()
+
+        first_month = month_start(
+            start_date
+        )
+
+        last_month = month_start(
+            end_date
+        )
+
+        if end_date.day == 1:
+            last_month = add_months(
+                last_month,
+                -1,
+            )
+
+        with sync_playwright() as p:
+            browser = (
+                p.chromium.connect_over_cdp(
+                    "http://127.0.0.1:9222",
+                    timeout=10_000,
+                )
+            )
+
+            context = browser.contexts[0]
+
+            page = next(
+                (
+                    existing_page
+                    for existing_page
+                    in context.pages
+                    if "calendar.google.com"
+                    in existing_page.url
+                ),
+                None,
+            )
+
+            if page is None:
+                page = context.new_page()
+
+            current_month = first_month
+
+            try:
+                while (
+                    current_month
+                    <= last_month
+                ):
+                    health = None
+
+                    try:
+                        self._open_month(
+                            page,
+                            current_month,
+                        )
+
+                        _, health = (
+                            self._scrape_visible_tasks(
+                                page,
+                                start_date,
+                                end_date,
+                            )
+                        )
+
+                    except Exception as exc:
+                        health = {
+                            "diagnostic_error":
+                                repr(exc),
+                        }
+
+                    self._save_diagnostic_snapshot(
+                        page=page,
+                        current_month=current_month,
+                        reason=reason,
+                        health=health,
+                    )
 
                     current_month = add_months(
                         current_month,
@@ -2318,7 +3853,6 @@ class GoogleCalendarScraperService:
                     )
 
             finally:
-                # Leave the hidden browser in a predictable state.
                 today = datetime.now().date()
 
                 try:
@@ -2330,11 +3864,212 @@ class GoogleCalendarScraperService:
                 except Exception:
                     pass
 
-        output = list(results.values())
-        output.sort(
-            key=lambda item: item.sort_key()
-        )
-        return output
+    def _save_diagnostic_snapshot(
+        self,
+        page,
+        current_month: date,
+        reason: str,
+        health: dict | None,
+    ) -> None:
+        """
+        Save a local diagnostic file when the
+        scraper detects an incompatible Google
+        Calendar task structure.
+        """
+
+        try:
+            diagnostic_nodes = []
+
+            buttons = page.locator(
+                'div[role="button"]'
+            )
+
+            total_buttons = (
+                buttons.count()
+            )
+
+            for index in range(
+                total_buttons
+            ):
+                button = buttons.nth(
+                    index
+                )
+
+                try:
+                    information = (
+                        button.evaluate(
+                            """
+                            el => {
+                                const spans = [
+                                    ...el.querySelectorAll(
+                                        "span"
+                                    )
+                                ];
+
+                                const taskSpan =
+                                    spans.find(
+                                        span =>
+                                            span.innerText
+                                            &&
+                                            span.innerText
+                                                .trim()
+                                                .toLowerCase()
+                                                .startsWith(
+                                                    "task:"
+                                                )
+                                    );
+
+                                if (!taskSpan) {
+                                    return null;
+                                }
+
+                                const attrs = {};
+
+                                for (
+                                    const attr
+                                    of el.attributes
+                                ) {
+                                    attrs[
+                                        attr.name
+                                    ] = attr.value;
+                                }
+
+                                return {
+                                    canonical_text:
+                                        taskSpan
+                                            .innerText
+                                            .trim(),
+
+                                    attributes:
+                                        attrs,
+
+                                    outer_html:
+                                        el.outerHTML,
+
+                                    parent_html:
+                                        el.parentElement
+                                            ? el
+                                                .parentElement
+                                                .outerHTML
+                                            : null
+                                };
+                            }
+                            """
+                        )
+                    )
+
+                    if not information:
+                        continue
+
+                    try:
+                        aria_snapshot = (
+                            button
+                            .aria_snapshot()
+                        )
+
+                    except Exception as exc:
+                        aria_snapshot = (
+                            "ARIA snapshot "
+                            "failed: "
+                            f"{exc}"
+                        )
+
+                    information[
+                        "index"
+                    ] = index
+
+                    information[
+                        "aria_snapshot"
+                    ] = aria_snapshot
+
+                    diagnostic_nodes.append(
+                        information
+                    )
+
+                except Exception as exc:
+                    diagnostic_nodes.append(
+                        {
+                            "index": index,
+                            "inspection_error":
+                                repr(exc),
+                        }
+                    )
+
+            snapshot = {
+                "created_at": (
+                    datetime.now()
+                    .astimezone()
+                    .isoformat()
+                ),
+                "reason": reason,
+                "url": page.url,
+                "month": (
+                    current_month
+                    .isoformat()
+                ),
+                "health": health,
+                "total_role_buttons":
+                    total_buttons,
+                "task_nodes":
+                    diagnostic_nodes,
+                "page_html_sample": page.locator(
+                    "body"
+                ).inner_text()[:10000],
+            }
+
+            output_dir = (
+                Path(
+                    os.environ[
+                        "LOCALAPPDATA"
+                    ]
+                )
+                / "DesktopCalendar"
+                / "Diagnostics"
+            )
+
+            output_dir.mkdir(
+                parents=True,
+                exist_ok=True,
+            )
+
+            timestamp = (
+                datetime.now()
+                .strftime(
+                    "%Y%m%d_%H%M%S"
+                )
+            )
+
+            output_file = (
+                output_dir
+                / (
+                    "scraper_failure_"
+                    f"{current_month:%Y_%m}_"
+                    f"{timestamp}.json"
+                )
+            )
+
+            output_file.write_text(
+                json.dumps(
+                    snapshot,
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+
+            print(
+                "SCRAPER DIAGNOSTIC SAVED:",
+                output_file,
+            )
+
+        except Exception as exc:
+            # Diagnostic generation itself
+            # must never crash the application.
+            print(
+                "Could not save scraper "
+                "diagnostic:",
+                repr(exc),
+            )
 
     def _open_month(
         self,
@@ -2342,6 +4077,7 @@ class GoogleCalendarScraperService:
         target_month: date,
         wait: bool = True,
     ) -> None:
+
         url = (
             f"{CALENDAR_URL}/month/"
             f"{target_month.year}/"
@@ -2350,7 +4086,10 @@ class GoogleCalendarScraperService:
 
         page.goto(
             url,
-            wait_until="domcontentloaded",
+            wait_until=(
+                "domcontentloaded"
+            ),
+            timeout=10_000,
         )
 
         if wait:
@@ -2363,8 +4102,33 @@ class GoogleCalendarScraperService:
         page,
         start_date: date,
         end_date: date,
-    ) -> list[CalendarEvent]:
-        results: list[CalendarEvent] = []
+    ) -> tuple[
+        list[CalendarEvent],
+        dict[str, int],
+    ]:
+
+        results: list[
+            CalendarEvent
+        ] = []
+
+        # Diagnostic-only signal.
+        # Do NOT treat zero containers as
+        # scraper failure because Google uses
+        # different DOM variants.
+        task_containers = (
+            page.locator(
+                '[data-eventchip]'
+                '[data-eventid^="tasks_"]'
+            )
+        )
+
+        container_count = (
+            task_containers.count()
+        )
+
+        candidate_count = 0
+        parse_failure_count = 0
+
         buttons = page.locator(
             'div[role="button"]'
         )
@@ -2372,47 +4136,69 @@ class GoogleCalendarScraperService:
         for index in range(
             buttons.count()
         ):
-            button = buttons.nth(index)
+            button = buttons.nth(
+                index
+            )
 
             try:
-                canonical = button.evaluate(
-                    """
-                    el => {
-                        const spans = [
-                            ...el.querySelectorAll("span")
-                        ];
+                canonical = (
+                    button.evaluate(
+                        """
+                        el => {
+                            const spans = [
+                                ...el.querySelectorAll(
+                                    "span"
+                                )
+                            ];
 
-                        const target = spans.find(
-                            span => span.innerText
-                                && span.innerText
+                            const target =
+                                spans.find(
+                                    span =>
+                                        span.innerText
+                                        &&
+                                        span.innerText
+                                            .trim()
+                                            .toLowerCase()
+                                            .startsWith(
+                                                "task:"
+                                            )
+                                );
+
+                            return target
+                                ? target
+                                    .innerText
                                     .trim()
-                                    .toLowerCase()
-                                    .startsWith("task:")
-                        );
-
-                        return target
-                            ? target.innerText.trim()
-                            : null;
-                    }
-                    """
+                                : null;
+                        }
+                        """
+                    )
                 )
+
             except Exception:
                 continue
 
             if not canonical:
                 continue
 
+            candidate_count += 1
+
             match = TASK_PATTERN.match(
                 canonical
             )
 
             if not match:
+                parse_failure_count += 1
                 continue
 
-            task_date = datetime.strptime(
-                match.group("date"),
-                "%B %d, %Y",
-            ).date()
+            task_date = (
+                datetime.strptime(
+                    match.group(
+                        "date"
+                    ),
+                    "%B %d, %Y",
+                )
+                .date()
+            )
 
             if not (
                 start_date
@@ -2421,16 +4207,27 @@ class GoogleCalendarScraperService:
             ):
                 continue
 
-            title = match.group(
-                "title"
-            ).strip()
-            time_text = match.group(
-                "time"
-            ).strip()
+            title = (
+                match.group(
+                    "title"
+                )
+                .strip()
+            )
 
-            if time_text.lower() == "all day":
+            time_text = (
+                match.group(
+                    "time"
+                )
+                .strip()
+            )
+
+            if (
+                time_text.lower()
+                == "all day"
+            ):
                 start = task_date
                 end = None
+
             else:
                 parts = re.split(
                     r"\s+to\s+",
@@ -2438,16 +4235,25 @@ class GoogleCalendarScraperService:
                     flags=re.IGNORECASE,
                 )
 
-                start = datetime.combine(
-                    task_date,
-                    parse_time(parts[0]),
+                start = (
+                    datetime.combine(
+                        task_date,
+                        parse_time(
+                            parts[0]
+                        ),
+                    )
                 )
+
                 end = None
 
                 if len(parts) == 2:
-                    end = datetime.combine(
-                        task_date,
-                        parse_time(parts[1]),
+                    end = (
+                        datetime.combine(
+                            task_date,
+                            parse_time(
+                                parts[1]
+                            ),
+                        )
                     )
 
             results.append(
@@ -2459,7 +4265,18 @@ class GoogleCalendarScraperService:
                 )
             )
 
-        return results
+        health = {
+            "task_containers":
+                container_count,
+            "task_candidates":
+                candidate_count,
+            "parsed_tasks":
+                len(results),
+            "parse_failures":
+                parse_failure_count,
+        }
+
+        return results, health
 
 ============================================================
 FILE: services\google_tasks.py
@@ -2661,6 +4478,274 @@ class GoogleTasksService:
         return task
 
 ============================================================
+FILE: services\scraper_cache.py
+============================================================
+
+import json
+import os
+
+from datetime import date, datetime
+from pathlib import Path
+
+from models.calendar_event import CalendarEvent
+
+
+APP_DATA_DIR = (
+    Path(os.environ["LOCALAPPDATA"])
+    / "DesktopCalendar"
+)
+
+CACHE_FILE = (
+    APP_DATA_DIR
+    / "scraper_cache.json"
+)
+
+TEMP_CACHE_FILE = (
+    APP_DATA_DIR
+    / "scraper_cache.tmp"
+)
+
+
+class ScraperCache:
+    def save(
+        self,
+        tasks: list[CalendarEvent],
+    ) -> None:
+        APP_DATA_DIR.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        data = {
+            "updated_at": (
+                datetime.now()
+                .astimezone()
+                .isoformat()
+            ),
+            "tasks": [
+                self._serialize(task)
+                for task in tasks
+            ],
+        }
+
+        serialized = json.dumps(
+            data,
+            indent=2,
+            ensure_ascii=False,
+        )
+
+        try:
+            # Write everything to a temporary
+            # file first.
+            with TEMP_CACHE_FILE.open(
+                "w",
+                encoding="utf-8",
+            ) as file:
+                file.write(
+                    serialized
+                )
+
+                # Make Python flush its buffer.
+                file.flush()
+
+                # Ask the OS to flush the file
+                # to disk before replacing the
+                # known-good cache.
+                os.fsync(
+                    file.fileno()
+                )
+
+            # Atomic replacement.
+            # The old cache stays untouched until
+            # the new file has been fully written.
+            os.replace(
+                TEMP_CACHE_FILE,
+                CACHE_FILE,
+            )
+
+        except Exception:
+            # Never leave a broken temp file
+            # behind.
+            try:
+                if TEMP_CACHE_FILE.exists():
+                    TEMP_CACHE_FILE.unlink()
+            except Exception:
+                pass
+
+            raise
+
+    def load(
+        self,
+    ) -> list[CalendarEvent]:
+        if not CACHE_FILE.exists():
+            return []
+
+        try:
+            data = json.loads(
+                CACHE_FILE.read_text(
+                    encoding="utf-8"
+                )
+            )
+
+            return [
+                self._deserialize(item)
+                for item in data.get(
+                    "tasks",
+                    [],
+                )
+            ]
+
+        except Exception as exc:
+            print(
+                "Scraper cache error:",
+                repr(exc),
+            )
+
+            return []
+
+    def _serialize(
+        self,
+        task: CalendarEvent,
+    ) -> dict:
+        return {
+            "summary":
+                task.summary,
+
+            "start":
+                task.start.isoformat(),
+
+            "start_is_datetime":
+                isinstance(
+                    task.start,
+                    datetime,
+                ),
+
+            "end": (
+                task.end.isoformat()
+                if task.end
+                else None
+            ),
+
+            "end_is_datetime":
+                isinstance(
+                    task.end,
+                    datetime,
+                ),
+
+            "event_id":
+                task.event_id,
+
+            "location":
+                task.location,
+
+            "description":
+                task.description,
+
+            "recurrence":
+                task.recurrence,
+
+            "url":
+                task.url,
+
+            "organizer":
+                task.organizer,
+
+            "attendees":
+                task.attendees,
+
+            "reminders":
+                task.reminders,
+
+            "item_type":
+                task.item_type,
+        }
+
+    def _deserialize(
+        self,
+        item: dict,
+    ) -> CalendarEvent:
+
+        start = (
+            datetime.fromisoformat(
+                item["start"]
+            )
+            if item.get(
+                "start_is_datetime"
+            )
+            else date.fromisoformat(
+                item["start"]
+            )
+        )
+
+        end = None
+
+        if item.get("end"):
+            end = (
+                datetime.fromisoformat(
+                    item["end"]
+                )
+                if item.get(
+                    "end_is_datetime"
+                )
+                else date.fromisoformat(
+                    item["end"]
+                )
+            )
+
+        return CalendarEvent(
+            summary=item[
+                "summary"
+            ],
+
+            start=start,
+            end=end,
+
+            event_id=item.get(
+                "event_id"
+            ),
+
+            location=item.get(
+                "location",
+                "",
+            ),
+
+            description=item.get(
+                "description",
+                "",
+            ),
+
+            recurrence=item.get(
+                "recurrence",
+                [],
+            ),
+
+            url=item.get(
+                "url",
+                "",
+            ),
+
+            organizer=item.get(
+                "organizer",
+                "",
+            ),
+
+            attendees=item.get(
+                "attendees",
+                [],
+            ),
+
+            reminders=item.get(
+                "reminders",
+                [],
+            ),
+
+            item_type=item.get(
+                "item_type",
+                "task",
+            ),
+        )
+
+============================================================
 FILE: services\__init__.py
 ============================================================
 
@@ -2675,8 +4760,18 @@ FILE: ui\calendar_widget.py
 
 from datetime import date, datetime
 
-from PySide6.QtCore import QTimer, Qt, QUrl, Signal, Slot
-from PySide6.QtGui import QDesktopServices, QHideEvent, QShowEvent
+from PySide6.QtCore import (
+    QTimer,
+    Qt,
+    QUrl,
+    Signal,
+    Slot,
+)
+from PySide6.QtGui import (
+    QDesktopServices,
+    QHideEvent,
+    QShowEvent,
+)
 from PySide6.QtWidgets import (
     QDialog,
     QHBoxLayout,
@@ -2687,10 +4782,16 @@ from controllers.calendar_controller import CalendarController
 from models.calendar_event import CalendarEvent
 from services.combined_calendar import CombinedCalendarService
 from services.event_cache import EventCache
-from ui.behaviors.frameless_window import FramelessWindowBehavior
-from ui.behaviors.window_position import WindowPositionManager
+from ui.behaviors.frameless_window import (
+    FramelessWindowBehavior,
+)
+from ui.behaviors.window_position import (
+    WindowPositionManager,
+)
 from ui.components.month_calendar import MonthCalendar
-from ui.components.upcoming_events import UpcomingEventsPanel
+from ui.components.upcoming_events import (
+    UpcomingEventsPanel,
+)
 from ui.dialogs.settings_dialog import SettingsDialog
 from ui.styles import OUTER_CONTAINER_STYLE
 from utils.app_settings import AppSettings
@@ -2702,8 +4803,6 @@ class CalendarWidget(
 ):
     """Top-level desktop calendar window."""
 
-    # The browser scraper now covers four calendar months. Five minutes keeps
-    # the background work quiet; the manual refresh button remains available.
     REFRESH_INTERVAL_MS = 5 * 60_000
 
     visibility_changed = Signal(bool)
@@ -2712,8 +4811,13 @@ class CalendarWidget(
         super().__init__()
 
         self.settings = AppSettings()
+
         self.upcoming_days = (
             self.settings.get_upcoming_days()
+        )
+
+        self.preferred_browser = (
+            self.settings.get_browser()
         )
 
         self.service = CombinedCalendarService()
@@ -2724,10 +4828,16 @@ class CalendarWidget(
         )
 
         self.cache = EventCache()
+
         self.last_successful_update = None
         self.sync_failed = False
         self.cache_updated_at = None
         self.has_cached_events = False
+
+        # Separate scraper state from
+        # overall Calendar/API sync state.
+        self.scraper_status = "unknown"
+        self.scraper_error = None
 
         self._setup_window()
         self._setup_ui()
@@ -2741,6 +4851,7 @@ class CalendarWidget(
                 self.settings,
             )
         )
+
         self.position_manager.restore()
 
         self._load_cached_events()
@@ -2752,6 +4863,7 @@ class CalendarWidget(
 
     def _load_cached_events(self) -> None:
         events = self.cache.load()
+
         self.cache_updated_at = (
             self.cache.get_updated_at()
         )
@@ -2764,14 +4876,17 @@ class CalendarWidget(
         self.month_calendar.set_events(
             events
         )
+
         self.upcoming_events.set_events(
             events
         )
 
         if self.cache_updated_at:
             self.last_successful_update = (
-                self.cache_updated_at.astimezone()
+                self.cache_updated_at
+                .astimezone()
             )
+
             self.upcoming_events.set_sync_status(
                 self._saved_status_text(
                     self.last_successful_update
@@ -2788,10 +4903,8 @@ class CalendarWidget(
         )
 
         self.setWindowFlags(
-            Qt.Window
+            Qt.Tool
             | Qt.FramelessWindowHint
-            | Qt.WindowMinimizeButtonHint
-            | Qt.WindowSystemMenuHint
         )
 
         self.setAttribute(
@@ -2802,10 +4915,12 @@ class CalendarWidget(
             850,
             320,
         )
+
         self.setMinimumSize(
             650,
             300,
         )
+
         self.setMouseTracking(True)
 
     def showEvent(
@@ -2813,19 +4928,30 @@ class CalendarWidget(
         event: QShowEvent,
     ) -> None:
         super().showEvent(event)
-        self.upcoming_events.ensure_header_controls_visible()
-        self.visibility_changed.emit(True)
+
+        self.upcoming_events\
+            .ensure_header_controls_visible()
+
+        self.visibility_changed.emit(
+            True
+        )
 
     def hideEvent(
         self,
         event: QHideEvent,
     ) -> None:
         super().hideEvent(event)
-        self.visibility_changed.emit(False)
+
+        self.visibility_changed.emit(
+            False
+        )
 
     def show_from_tray(self) -> None:
         self.show()
-        self.upcoming_events.ensure_header_controls_visible()
+
+        self.upcoming_events\
+            .ensure_header_controls_visible()
+
         self.raise_()
         self.activateWindow()
 
@@ -2840,19 +4966,25 @@ class CalendarWidget(
     # ================================================================
 
     def _setup_ui(self) -> None:
-        main_layout = QHBoxLayout(self)
+        main_layout = QHBoxLayout(
+            self
+        )
+
         main_layout.setContentsMargins(
             8,
             8,
             8,
             8,
         )
+
         main_layout.setSpacing(0)
 
         self.outer_container = QWidget()
+
         self.outer_container.setObjectName(
             "outerContainer"
         )
+
         self.outer_container.setStyleSheet(
             OUTER_CONTAINER_STYLE
         )
@@ -2860,18 +4992,24 @@ class CalendarWidget(
         outer_layout = QHBoxLayout(
             self.outer_container
         )
+
         outer_layout.setContentsMargins(
             0,
             0,
             0,
             0,
         )
+
         outer_layout.setSpacing(0)
 
-        self.month_calendar = MonthCalendar()
+        self.month_calendar = (
+            MonthCalendar()
+        )
+
         self.upcoming_events = (
             UpcomingEventsPanel(
-                days_ahead=self.upcoming_days
+                days_ahead=
+                    self.upcoming_days
             )
         )
 
@@ -2879,6 +5017,7 @@ class CalendarWidget(
             self.month_calendar,
             1,
         )
+
         outer_layout.addWidget(
             self.upcoming_events,
             1,
@@ -2896,32 +5035,58 @@ class CalendarWidget(
         self.controller.events_updated.connect(
             self._display_events
         )
+
         self.controller.error.connect(
             self._handle_calendar_error
         )
 
-        self.upcoming_events.open_google_calendar_requested.connect(
-            self._open_google_calendar
-        )
-        self.upcoming_events.refresh_requested.connect(
-            self._refresh_now
-        )
-        self.upcoming_events.lock_position_requested.connect(
-            self._change_position_lock
-        )
-        self.upcoming_events.upcoming_requested.connect(
-            self._show_upcoming_mode
-        )
-        self.upcoming_events.close_requested.connect(
-            self.hide
-        )
+        self.controller\
+            .scraper_status_changed\
+            .connect(
+                self._handle_scraper_status
+            )
 
-        self.month_calendar.date_selected.connect(
-            self._show_selected_date
-        )
-        self.month_calendar.month_changed.connect(
-            self._month_changed
-        )
+        self.upcoming_events\
+            .open_google_calendar_requested\
+            .connect(
+                self._open_google_calendar
+            )
+
+        self.upcoming_events\
+            .refresh_requested\
+            .connect(
+                self._refresh_now
+            )
+
+        self.upcoming_events\
+            .lock_position_requested\
+            .connect(
+                self._change_position_lock
+            )
+
+        self.upcoming_events\
+            .upcoming_requested\
+            .connect(
+                self._show_upcoming_mode
+            )
+
+        self.upcoming_events\
+            .close_requested\
+            .connect(
+                self.hide
+            )
+
+        self.month_calendar\
+            .date_selected\
+            .connect(
+                self._show_selected_date
+            )
+
+        self.month_calendar\
+            .month_changed\
+            .connect(
+                self._month_changed
+            )
 
     # ================================================================
     # TIMER
@@ -2929,20 +5094,67 @@ class CalendarWidget(
 
     def _setup_timer(self) -> None:
         self.timer = QTimer(self)
+
         self.timer.timeout.connect(
             self.controller.refresh
         )
+
         self.timer.start(
             self.REFRESH_INTERVAL_MS
         )
 
-        self.status_timer = QTimer(self)
+        self.status_timer = QTimer(
+            self
+        )
+
         self.status_timer.timeout.connect(
             self._update_sync_status
         )
-        self.status_timer.start(30_000)
+
+        self.status_timer.start(
+            30_000
+        )
 
     def _update_sync_status(self) -> None:
+        if self.sync_failed:
+            if self.last_successful_update:
+                age_text = self._age_text(
+                    self.last_successful_update
+                )
+
+                self.upcoming_events\
+                    .set_sync_status(
+                        (
+                            "â€¢ Showing saved events"
+                            f" Â· Updated {age_text}"
+                        ),
+                        warning=True,
+                    )
+
+            else:
+                self.upcoming_events\
+                    .set_sync_status(
+                        (
+                            "â€¢ Couldn't connect to "
+                            "Google Calendar"
+                        ),
+                        warning=True,
+                    )
+
+            return
+
+        if self.scraper_status == "cached":
+            self.upcoming_events\
+                .set_sync_status(
+                    (
+                        "â€¢ Task sync issue Â· "
+                        "Showing cached task data"
+                    ),
+                    warning=True,
+                )
+
+            return
+
         if self.last_successful_update is None:
             return
 
@@ -2950,15 +5162,9 @@ class CalendarWidget(
             self.last_successful_update
         )
 
-        if self.sync_failed:
-            self.upcoming_events.set_sync_status(
-                f"â€¢ Showing saved events Â· Updated {age_text}",
-                warning=True,
-            )
-        else:
-            self.upcoming_events.set_sync_status(
-                f"â€¢ Updated {age_text}"
-            )
+        self.upcoming_events.set_sync_status(
+            f"â€¢ Updated {age_text}"
+        )
 
     # ================================================================
     # DISPLAY
@@ -2972,15 +5178,19 @@ class CalendarWidget(
         self.month_calendar.set_events(
             events
         )
+
         self.upcoming_events.set_events(
             events
         )
 
-        self.cache.save(events)
+        self.cache.save(
+            events
+        )
 
         self.last_successful_update = (
             datetime.now().astimezone()
         )
+
         self.sync_failed = False
 
         self._update_sync_status()
@@ -2988,6 +5198,36 @@ class CalendarWidget(
         self._install_mouse_tracking(
             self.outer_container
         )
+
+    # ================================================================
+    # SCRAPER STATUS
+    # ================================================================
+
+    @Slot(object)
+    def _handle_scraper_status(
+        self,
+        status: object,
+    ) -> None:
+        if not isinstance(
+            status,
+            dict,
+        ):
+            return
+
+        self.scraper_status = (
+            status.get(
+                "status",
+                "unknown",
+            )
+        )
+
+        self.scraper_error = (
+            status.get(
+                "error"
+            )
+        )
+
+        self._update_sync_status()
 
     # ================================================================
     # DATE SELECTION
@@ -3007,14 +5247,17 @@ class CalendarWidget(
         self,
         _month: date,
     ) -> None:
-        # Avoid showing details for a date that is no longer visible on the
-        # left. Scrolling a month returns the right side to Upcoming mode.
         self._show_upcoming_mode()
 
     @Slot()
-    def _show_upcoming_mode(self) -> None:
-        self.month_calendar.clear_selection()
-        self.upcoming_events.show_upcoming()
+    def _show_upcoming_mode(
+        self,
+    ) -> None:
+        self.month_calendar\
+            .clear_selection()
+
+        self.upcoming_events\
+            .show_upcoming()
 
     # ================================================================
     # ERROR
@@ -3032,23 +5275,22 @@ class CalendarWidget(
 
         self.sync_failed = True
 
-        if self.last_successful_update:
-            self._update_sync_status()
-        else:
-            self.upcoming_events.set_sync_status(
-                "â€¢ Couldn't connect to Google Calendar",
-                warning=True,
-            )
+        self._update_sync_status()
 
     # ================================================================
     # GOOGLE CALENDAR
     # ================================================================
 
     @Slot()
-    def _open_google_calendar(self) -> None:
+    def _open_google_calendar(
+        self,
+    ) -> None:
         QDesktopServices.openUrl(
             QUrl(
-                "https://calendar.google.com/calendar/u/0/r"
+                (
+                    "https://calendar.google.com/"
+                    "calendar/u/0/r"
+                )
             )
         )
 
@@ -3057,41 +5299,88 @@ class CalendarWidget(
     # ================================================================
 
     @Slot()
-    def open_settings(self) -> None:
+    def open_settings(
+        self,
+    ) -> None:
         dialog = SettingsDialog(
             self.upcoming_days,
-            self if self.isVisible() else None,
+            self.preferred_browser,
+            (
+                self
+                if self.isVisible()
+                else None
+            ),
         )
 
-        if dialog.exec() != QDialog.Accepted:
+        if (
+            dialog.exec()
+            != QDialog.Accepted
+        ):
             return
 
-        new_days = dialog.upcoming_days()
+        new_days = (
+            dialog.upcoming_days()
+        )
 
-        if new_days == self.upcoming_days:
-            return
+        new_browser = (
+            dialog.browser()
+        )
 
-        self.upcoming_days = new_days
-        self.settings.set_upcoming_days(
+        days_changed = (
             new_days
+            != self.upcoming_days
         )
+
+        browser_changed = (
+            new_browser
+            != self.preferred_browser
+        )
+
+        if (
+            not days_changed
+            and not browser_changed
+        ):
+            return
+
+        if days_changed:
+            self.upcoming_days = (
+                new_days
+            )
+
+            self.settings\
+                .set_upcoming_days(
+                    new_days
+                )
+
+            self.upcoming_events\
+                .set_days_ahead(
+                    new_days
+                )
+
+            self._show_upcoming_mode()
+
+        if browser_changed:
+            self.preferred_browser = (
+                new_browser
+            )
+
+            self.settings\
+                .set_browser(
+                    new_browser
+                )
+
         self.settings.sync()
-
-        self.upcoming_events.set_days_ahead(
-            new_days
-        )
-
-        # The four-month data window already covers every 7/14/30-day option,
-        # so changing this setting only changes the right-side filter.
-        self._show_upcoming_mode()
 
     # ================================================================
     # POSITION / LOCK
     # ================================================================
 
     @Slot()
-    def _reset_position(self) -> None:
-        self.position_manager.move_to_default_screen()
+    def _reset_position(
+        self,
+    ) -> None:
+        self.position_manager\
+            .move_to_default_screen()
 
     @Slot(bool)
     def _change_position_lock(
@@ -3107,10 +5396,14 @@ class CalendarWidget(
     # ================================================================
 
     @Slot()
-    def _refresh_now(self) -> None:
-        self.upcoming_events.set_sync_status(
-            "Refreshing..."
-        )
+    def _refresh_now(
+        self,
+    ) -> None:
+        self.upcoming_events\
+            .set_sync_status(
+                "Refreshing..."
+            )
+
         self.controller.refresh()
 
     # ================================================================
@@ -3123,22 +5416,32 @@ class CalendarWidget(
     ) -> str:
         return (
             "Showing saved events Â· Updated "
-            + self._age_text(updated_at)
+            + self._age_text(
+                updated_at
+            )
         )
 
     def _age_text(
         self,
         updated_at: datetime,
     ) -> str:
-        now = datetime.now().astimezone()
-        updated_at = updated_at.astimezone()
+        now = (
+            datetime.now()
+            .astimezone()
+        )
+
+        updated_at = (
+            updated_at.astimezone()
+        )
 
         seconds = max(
             0,
             (
-                now - updated_at
+                now
+                - updated_at
             ).total_seconds(),
         )
+
         minutes = int(
             seconds // 60
         )
@@ -3150,14 +5453,20 @@ class CalendarWidget(
             return "1 min ago"
 
         if minutes < 60:
-            return f"{minutes} min ago"
+            return (
+                f"{minutes} min ago"
+            )
 
-        hours = minutes // 60
+        hours = (
+            minutes // 60
+        )
 
         if hours == 1:
             return "1 hour ago"
 
-        return f"{hours} hours ago"
+        return (
+            f"{hours} hours ago"
+        )
 
 ============================================================
 FILE: ui\icons.py
@@ -5571,6 +7880,135 @@ __all__ = [
 ]
 
 ============================================================
+FILE: ui\dialogs\browser_setup_dialog.py
+============================================================
+
+from __future__ import annotations
+
+from PySide6.QtWidgets import (
+    QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QLabel,
+    QMessageBox,
+    QPushButton,
+    QVBoxLayout,
+)
+
+from services.chrome_calendar_session import (
+    browser_display_name,
+    find_browser_executable,
+    open_calendar_browser_for_login,
+)
+from utils.app_settings import AppSettings
+
+
+class BrowserSetupDialog(QDialog):
+    """First-run browser choice for the Calendar task scraper."""
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+
+        self.setWindowTitle("Calendar Browser Setup")
+        self.setModal(True)
+        self.setMinimumWidth(390)
+
+        layout = QVBoxLayout(self)
+
+        title = QLabel("Choose a browser for calendar sync")
+        title.setStyleSheet(
+            "font-size: 16px; font-weight: 600;"
+        )
+        layout.addWidget(title)
+
+        description = QLabel(
+            "Desktop Calendar uses a separate browser profile only for "
+            "reading task information that Google does not provide through "
+            "the Tasks API. Microsoft Edge is the default."
+        )
+        description.setWordWrap(True)
+        layout.addWidget(description)
+
+        self.browser_combo = QComboBox()
+
+        labels = {
+            "edge": "Microsoft Edge (recommended)",
+            "chrome": "Google Chrome",
+            "brave": "Brave",
+        }
+
+        for browser in AppSettings.BROWSER_OPTIONS:
+            installed = find_browser_executable(browser) is not None
+            text = labels[browser]
+            if not installed:
+                text += " â€” not found"
+            self.browser_combo.addItem(text, browser)
+
+        edge_index = self.browser_combo.findData(
+            AppSettings.DEFAULT_BROWSER
+        )
+        if edge_index >= 0:
+            self.browser_combo.setCurrentIndex(edge_index)
+
+        layout.addWidget(self.browser_combo)
+
+        login_note = QLabel(
+            "For recurring task support, open the selected browser once, "
+            "sign in to Google Calendar, then return here. The app uses its "
+            "own browser profile; it does not modify your normal browser profile."
+        )
+        login_note.setWordWrap(True)
+        layout.addWidget(login_note)
+
+        self.login_button = QPushButton(
+            "Open Google Calendar for sign-in"
+        )
+        self.login_button.clicked.connect(
+            self._open_for_login
+        )
+        layout.addWidget(self.login_button)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.Ok | QDialogButtonBox.Cancel
+        )
+        buttons.button(QDialogButtonBox.Ok).setText(
+            "Finish setup"
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def selected_browser(self) -> str:
+        return str(
+            self.browser_combo.currentData()
+            or AppSettings.DEFAULT_BROWSER
+        )
+
+    def _open_for_login(self) -> None:
+        browser = self.selected_browser()
+
+        try:
+            open_calendar_browser_for_login(browser)
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                "Browser could not be opened",
+                str(exc),
+            )
+            return
+
+        QMessageBox.information(
+            self,
+            "Sign in to Google Calendar",
+            (
+                f"{browser_display_name(browser)} has been opened with "
+                "Desktop Calendar's separate profile.\n\n"
+                "Sign in to Google Calendar there. When Calendar is visible, "
+                "you can close the browser and click Finish setup."
+            ),
+        )
+
+============================================================
 FILE: ui\dialogs\create_item_dialog.py
 ============================================================
 
@@ -5700,6 +8138,420 @@ class CreateItemDialog(QDialog):
         )
 
 ============================================================
+FILE: ui\dialogs\first_run_setup_dialog.py
+============================================================
+
+from __future__ import annotations
+
+from PySide6.QtWidgets import (
+    QComboBox,
+    QDialog,
+    QHBoxLayout,
+    QLabel,
+    QMessageBox,
+    QPushButton,
+    QVBoxLayout,
+)
+
+from services.chrome_calendar_session import (
+    browser_display_name,
+    calendar_browser_signed_in,
+    find_browser_executable,
+    open_calendar_browser_for_login,
+    stop_calendar_browser,
+)
+from services.google_auth import get_google_credentials
+from utils.app_settings import AppSettings
+
+
+class FirstRunSetupDialog(QDialog):
+    """Required one-time setup before the desktop widget is started."""
+
+    def __init__(
+        self,
+        parent=None,
+    ) -> None:
+        super().__init__(parent)
+
+        self.settings = AppSettings()
+        self.google_connected = False
+        self.browser_verified = False
+
+        self.setWindowTitle(
+            "Set up Desktop Calendar"
+        )
+        self.setModal(True)
+        self.setMinimumWidth(470)
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(12)
+
+        title = QLabel(
+            "Welcome to Desktop Calendar"
+        )
+        title.setStyleSheet(
+            "font-size: 19px; font-weight: 600;"
+        )
+        layout.addWidget(title)
+
+        intro = QLabel(
+            "Complete these two sign-ins once. Desktop Calendar will then "
+            "start normally and refresh in the background."
+        )
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+
+        # ------------------------------------------------------------
+        # Step 1: Google OAuth for Calendar API + Tasks API
+        # ------------------------------------------------------------
+
+        oauth_title = QLabel(
+            "1. Connect your Google account"
+        )
+        oauth_title.setStyleSheet(
+            "font-size: 15px; font-weight: 600;"
+        )
+        layout.addWidget(oauth_title)
+
+        oauth_text = QLabel(
+            "This gives Desktop Calendar permission to read Google Calendar "
+            "events and Google Tasks."
+        )
+        oauth_text.setWordWrap(True)
+        layout.addWidget(oauth_text)
+
+        oauth_row = QHBoxLayout()
+
+        self.google_button = QPushButton(
+            "Sign in with Google"
+        )
+        self.google_button.clicked.connect(
+            self._connect_google
+        )
+        oauth_row.addWidget(
+            self.google_button
+        )
+
+        self.google_status = QLabel(
+            "Not connected"
+        )
+        oauth_row.addWidget(
+            self.google_status,
+            1,
+        )
+
+        layout.addLayout(
+            oauth_row
+        )
+
+        # ------------------------------------------------------------
+        # Step 2: Browser profile for recurring-task scraping
+        # ------------------------------------------------------------
+
+        browser_title = QLabel(
+            "2. Connect Google Calendar for recurring tasks"
+        )
+        browser_title.setStyleSheet(
+            "font-size: 15px; font-weight: 600;"
+        )
+        layout.addWidget(browser_title)
+
+        browser_text = QLabel(
+            "Google's Tasks API does not expose everything shown in Calendar. "
+            "Choose a Chromium browser so Desktop Calendar can read that extra "
+            "task information from a separate app-owned profile."
+        )
+        browser_text.setWordWrap(True)
+        layout.addWidget(browser_text)
+
+        self.browser_combo = QComboBox()
+
+        labels = {
+            "edge": "Microsoft Edge (recommended)",
+            "chrome": "Google Chrome",
+            "brave": "Brave",
+        }
+
+        for browser in AppSettings.BROWSER_OPTIONS:
+            installed = (
+                find_browser_executable(browser)
+                is not None
+            )
+
+            text = labels[browser]
+
+            if not installed:
+                text += " â€” not found"
+
+            self.browser_combo.addItem(
+                text,
+                browser,
+            )
+
+        default_index = (
+            self.browser_combo.findData(
+                AppSettings.DEFAULT_BROWSER
+            )
+        )
+
+        if default_index >= 0:
+            self.browser_combo.setCurrentIndex(
+                default_index
+            )
+
+        self.browser_combo.currentIndexChanged.connect(
+            self._browser_changed
+        )
+        self.browser_combo.setEnabled(False)
+
+        layout.addWidget(
+            self.browser_combo
+        )
+
+        browser_buttons = QHBoxLayout()
+
+        self.browser_login_button = QPushButton(
+            "Open browser to sign in"
+        )
+        self.browser_login_button.setEnabled(
+            False
+        )
+        self.browser_login_button.clicked.connect(
+            self._open_browser_login
+        )
+        browser_buttons.addWidget(
+            self.browser_login_button
+        )
+
+        self.browser_check_button = QPushButton(
+            "Check sign-in"
+        )
+        self.browser_check_button.setEnabled(
+            False
+        )
+        self.browser_check_button.clicked.connect(
+            self._check_browser_login
+        )
+        browser_buttons.addWidget(
+            self.browser_check_button
+        )
+
+        layout.addLayout(
+            browser_buttons
+        )
+
+        self.browser_status = QLabel(
+            "Complete Google account sign-in first."
+        )
+        self.browser_status.setWordWrap(True)
+        layout.addWidget(
+            self.browser_status
+        )
+
+        help_text = QLabel(
+            "When the browser opens, sign in until Google Calendar itself is "
+            "visible. Keep that browser window open, return here, and click "
+            "\"Check sign-in\"."
+        )
+        help_text.setWordWrap(True)
+        layout.addWidget(
+            help_text
+        )
+
+        # ------------------------------------------------------------
+        # Finish / cancel
+        # ------------------------------------------------------------
+
+        bottom = QHBoxLayout()
+        bottom.addStretch()
+
+        self.cancel_button = QPushButton(
+            "Cancel"
+        )
+        self.cancel_button.clicked.connect(
+            self.reject
+        )
+        bottom.addWidget(
+            self.cancel_button
+        )
+
+        self.finish_button = QPushButton(
+            "Finish setup"
+        )
+        self.finish_button.setEnabled(
+            False
+        )
+        self.finish_button.clicked.connect(
+            self._finish_setup
+        )
+        bottom.addWidget(
+            self.finish_button
+        )
+
+        layout.addLayout(
+            bottom
+        )
+
+    def _selected_browser(self) -> str:
+        return str(
+            self.browser_combo.currentData()
+            or AppSettings.DEFAULT_BROWSER
+        )
+
+    def _connect_google(self) -> None:
+        self.google_button.setEnabled(
+            False
+        )
+        self.google_status.setText(
+            "Waiting for Google sign-in..."
+        )
+
+        try:
+            credentials = get_google_credentials()
+        except Exception as exc:
+            self.google_status.setText(
+                "Not connected"
+            )
+            QMessageBox.warning(
+                self,
+                "Google sign-in failed",
+                str(exc),
+            )
+            self.google_button.setEnabled(
+                True
+            )
+            return
+
+        if not credentials.valid:
+            self.google_status.setText(
+                "Not connected"
+            )
+            self.google_button.setEnabled(
+                True
+            )
+            return
+
+        self.google_connected = True
+        self.google_status.setText(
+            "Connected"
+        )
+        self.google_button.setText(
+            "Google account connected"
+        )
+
+        self.browser_combo.setEnabled(
+            True
+        )
+        self.browser_login_button.setEnabled(
+            True
+        )
+
+        self.browser_status.setText(
+            "Choose a browser, then open it to sign in to Google Calendar."
+        )
+
+        self._update_finish_state()
+
+    def _browser_changed(self) -> None:
+        self.browser_verified = False
+        self.browser_check_button.setEnabled(
+            False
+        )
+
+        if self.google_connected:
+            self.browser_status.setText(
+                "Open this browser and sign in to Google Calendar."
+            )
+
+        self._update_finish_state()
+
+    def _open_browser_login(self) -> None:
+        browser = self._selected_browser()
+
+        if find_browser_executable(browser) is None:
+            QMessageBox.warning(
+                self,
+                "Browser not found",
+                (
+                    f"{browser_display_name(browser)} was not found. "
+                    "Install it or choose another browser."
+                ),
+            )
+            return
+
+        try:
+            open_calendar_browser_for_login(
+                browser
+            )
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                "Browser could not be opened",
+                str(exc),
+            )
+            return
+
+        self.browser_verified = False
+        self.browser_check_button.setEnabled(
+            True
+        )
+        self.browser_status.setText(
+            "Sign in until Google Calendar is visible, then click Check sign-in."
+        )
+        self._update_finish_state()
+
+    def _check_browser_login(self) -> None:
+        if not calendar_browser_signed_in():
+            self.browser_verified = False
+            self.browser_status.setText(
+                "Google Calendar is not signed in yet."
+            )
+            QMessageBox.information(
+                self,
+                "Sign-in not detected",
+                (
+                    "Desktop Calendar cannot see an authenticated Google "
+                    "Calendar page yet.\n\n"
+                    "Finish signing in in the browser, leave Google Calendar "
+                    "open, then click Check sign-in again."
+                ),
+            )
+            self._update_finish_state()
+            return
+
+        self.browser_verified = True
+        self.browser_status.setText(
+            "Google Calendar sign-in verified."
+        )
+        self._update_finish_state()
+
+    def _update_finish_state(self) -> None:
+        self.finish_button.setEnabled(
+            self.google_connected
+            and self.browser_verified
+        )
+
+    def _finish_setup(self) -> None:
+        browser = self._selected_browser()
+
+        self.settings.set_browser(
+            browser
+        )
+        self.settings.set_setup_complete(
+            True
+        )
+        self.settings.sync()
+
+        # Close the one-time visible app-owned browser. The normal widget
+        # will relaunch the same profile headlessly when its first refresh runs.
+        try:
+            stop_calendar_browser()
+        except Exception:
+            pass
+
+        self.accept()
+
+============================================================
 FILE: ui\dialogs\settings_dialog.py
 ============================================================
 
@@ -5711,9 +8563,15 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QFormLayout,
     QLabel,
+    QMessageBox,
+    QPushButton,
     QVBoxLayout,
 )
 
+from services.chrome_calendar_session import (
+    browser_display_name,
+    open_calendar_browser_for_login,
+)
 from utils.app_settings import AppSettings
 
 
@@ -5721,21 +8579,20 @@ class SettingsDialog(QDialog):
     def __init__(
         self,
         upcoming_days: int,
+        preferred_browser: str = AppSettings.DEFAULT_BROWSER,
         parent=None,
     ) -> None:
         super().__init__(parent)
 
-        self.setWindowTitle(
-            "Desktop Calendar Settings"
-        )
+        self.setWindowTitle("Desktop Calendar Settings")
         self.setModal(True)
-        self.setMinimumWidth(330)
+        self.setMinimumWidth(360)
 
         layout = QVBoxLayout(self)
 
         description = QLabel(
-            "Choose how far ahead the upcoming list should show. "
-            "Seven days is recommended for a quick-glance widget."
+            "Choose how far ahead the upcoming list should show and which "
+            "browser Desktop Calendar should use for recurring-task sync."
         )
         description.setWordWrap(True)
         layout.addWidget(description)
@@ -5752,43 +8609,91 @@ class SettingsDialog(QDialog):
         }
 
         for days in AppSettings.UPCOMING_DAY_OPTIONS:
-            self.upcoming_combo.addItem(
-                labels[days],
-                days,
-            )
+            self.upcoming_combo.addItem(labels[days], days)
 
-        index = self.upcoming_combo.findData(
-            upcoming_days
-        )
-
+        index = self.upcoming_combo.findData(upcoming_days)
         if index >= 0:
-            self.upcoming_combo.setCurrentIndex(
-                index
+            self.upcoming_combo.setCurrentIndex(index)
+
+        form.addRow("Upcoming range:", self.upcoming_combo)
+
+        self.browser_combo = QComboBox()
+        browser_labels = {
+            "edge": "Microsoft Edge (recommended)",
+            "chrome": "Google Chrome",
+            "brave": "Brave",
+        }
+
+        for browser in AppSettings.BROWSER_OPTIONS:
+            self.browser_combo.addItem(
+                browser_labels[browser],
+                browser,
             )
 
-        form.addRow(
-            "Upcoming range:",
-            self.upcoming_combo,
+        browser_index = self.browser_combo.findData(
+            preferred_browser
         )
+        if browser_index < 0:
+            browser_index = self.browser_combo.findData(
+                AppSettings.DEFAULT_BROWSER
+            )
+        if browser_index >= 0:
+            self.browser_combo.setCurrentIndex(browser_index)
 
+        form.addRow("Calendar browser:", self.browser_combo)
         layout.addLayout(form)
 
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.Save
-            | QDialogButtonBox.Cancel
+        browser_note = QLabel(
+            "Changing browser takes effect after restarting Desktop Calendar. "
+            "Each browser uses a separate app-owned profile."
         )
-        buttons.accepted.connect(
-            self.accept
-        )
-        buttons.rejected.connect(
-            self.reject
-        )
+        browser_note.setWordWrap(True)
+        layout.addWidget(browser_note)
 
+        self.login_button = QPushButton(
+            "Open selected browser for Google sign-in"
+        )
+        self.login_button.clicked.connect(self._open_for_login)
+        layout.addWidget(self.login_button)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.Save | QDialogButtonBox.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
     def upcoming_days(self) -> int:
-        return int(
-            self.upcoming_combo.currentData()
+        return int(self.upcoming_combo.currentData())
+
+    def browser(self) -> str:
+        return str(
+            self.browser_combo.currentData()
+            or AppSettings.DEFAULT_BROWSER
+        )
+
+    def _open_for_login(self) -> None:
+        browser = self.browser()
+
+        try:
+            open_calendar_browser_for_login(browser)
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                "Browser could not be opened",
+                str(exc),
+            )
+            return
+
+        QMessageBox.information(
+            self,
+            "Sign in to Google Calendar",
+            (
+                f"{browser_display_name(browser)} has been opened with "
+                "Desktop Calendar's separate profile.\n\n"
+                "Sign in to Google Calendar there. You can then close "
+                "the browser and restart Desktop Calendar."
+            ),
         )
 
 ============================================================
@@ -5796,10 +8701,12 @@ FILE: ui\dialogs\__init__.py
 ============================================================
 
 from .create_item_dialog import CreateItemDialog
+from .first_run_setup_dialog import FirstRunSetupDialog
 from .settings_dialog import SettingsDialog
 
 __all__ = [
     "CreateItemDialog",
+    "FirstRunSetupDialog",
     "SettingsDialog",
 ]
 
@@ -5820,6 +8727,9 @@ class AppSettings:
 
     UPCOMING_DAY_OPTIONS = (3, 7, 14, 30)
     DEFAULT_UPCOMING_DAYS = 7
+
+    BROWSER_OPTIONS = ("edge", "chrome", "brave")
+    DEFAULT_BROWSER = "edge"
 
     def __init__(self) -> None:
         self._settings = QSettings(
@@ -5852,6 +8762,62 @@ class AppSettings:
         self._settings.setValue(
             "calendar/upcoming_days",
             days,
+        )
+
+    def has_browser_preference(self) -> bool:
+        return self._settings.contains(
+            "browser/preferred"
+        )
+
+    def get_browser(self) -> str:
+        value = str(
+            self._settings.value(
+                "browser/preferred",
+                self.DEFAULT_BROWSER,
+            )
+            or self.DEFAULT_BROWSER
+        ).lower()
+
+        if value not in self.BROWSER_OPTIONS:
+            return self.DEFAULT_BROWSER
+
+        return value
+
+    def set_browser(self, browser: str) -> None:
+        browser = browser.lower()
+
+        if browser not in self.BROWSER_OPTIONS:
+            raise ValueError(
+                f"Browser must be one of {self.BROWSER_OPTIONS}."
+            )
+
+        self._settings.setValue(
+            "browser/preferred",
+            browser,
+        )
+
+    def is_setup_complete(self) -> bool:
+        value = self._settings.value(
+            "setup/completed",
+            False,
+        )
+
+        if isinstance(value, str):
+            return value.lower() in (
+                "1",
+                "true",
+                "yes",
+            )
+
+        return bool(value)
+
+    def set_setup_complete(
+        self,
+        completed: bool,
+    ) -> None:
+        self._settings.setValue(
+            "setup/completed",
+            bool(completed),
         )
 
     def get_window_geometry(self) -> QByteArray | None:

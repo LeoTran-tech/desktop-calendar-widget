@@ -1,13 +1,8 @@
 $output = "ai_context.txt"
 
-# Xóa file cũ
 if (Test-Path $output) {
     Remove-Item $output
 }
-
-# ============================================
-# FOLDERS AI CẦN ĐỌC
-# ============================================
 
 $includeFolders = @(
     "controllers",
@@ -17,23 +12,17 @@ $includeFolders = @(
     "utils"
 )
 
-# ============================================
-# FILE Ở ROOT AI CẦN ĐỌC
-# ============================================
-
 $includeRootFiles = @(
     "app.py",
-    "config.py",
-    "config.example.json",
     "README.md",
     "ARCHITECTURE.md",
+    "RELIABILITY.md",
+    "BUILD.md",
     "requirements.txt",
-    "export_project.ps1"
+    "export_project.ps1",
+    "DesktopCalendar.iss",
+    "build_installer.ps1"
 )
-
-# ============================================
-# EXTENSIONS ĐƯỢC PHÉP
-# ============================================
 
 $allowedExtensions = @(
     ".py",
@@ -47,12 +36,9 @@ $allowedExtensions = @(
     ".ini",
     ".css",
     ".html",
-    ".js"
+    ".js",
+    ".iss"
 )
-
-# ============================================
-# FILE / FOLDER KHÔNG BAO GIỜ ĐƯA CHO AI
-# ============================================
 
 $excludeNames = @(
     "__pycache__",
@@ -61,10 +47,14 @@ $excludeNames = @(
     "venv",
     ".idea",
     ".vscode",
+    "build",
+    "dist",
+    "installer_output",
 
+    "BrowserProfiles",
+    "ChromeProfile",
     "chrome_profile",
     "google_calendar_profile",
-    "ChromeProfile",
     "calendar-debug-profile",
 
     "credentials.json",
@@ -77,10 +67,6 @@ $excludeNames = @(
     "project_dump.txt",
     "ai_context.txt"
 )
-
-# ============================================
-# HEADER
-# ============================================
 
 @"
 ============================================================
@@ -96,180 +82,89 @@ PRODUCT PURPOSE
 Desktop Calendar is a lightweight Windows desktop calendar
 widget built with PySide6.
 
-The product is NOT intended to replace Google Calendar.
+Its purpose is to let the user glance at the desktop and
+immediately understand what is coming up.
 
-Its primary purpose is:
-
-    Open computer
-        ->
-    glance at the desktop
-        ->
-    immediately understand what is coming up
-
-The widget should minimize the amount of attention, reading,
-clicking and interaction required from the user.
-
-Google Calendar remains the source of truth for creating,
-editing and deleting calendar data.
-
-The desktop widget mainly provides a fast, glanceable,
-read-oriented view of upcoming commitments.
+Google Calendar and Google Tasks remain the source of truth.
 
 ============================================================
-PRODUCT / UX PRINCIPLES
+CURRENT DATA ARCHITECTURE
 ============================================================
 
-1. MINIMIZE COGNITIVE LOAD
+1. Google Calendar API
+   - events and appointments
 
-The user should understand the important information within
-a few seconds.
+2. Google Tasks API
+   - dated task data
 
-Important information:
-- date
-- time
-- event/task title
-- whether the displayed data is up to date
+3. Google Calendar UI scraper
+   - supplements recurring-task occurrences / Calendar-visible
+     task time information that is not equivalently exposed by
+     the Tasks API
 
-Avoid unnecessary text, controls and visual noise.
-
-
-2. GLANCEABILITY FIRST
-
-Primary information must be visible without requiring clicks,
-hovering, opening menus or navigating through screens.
-
-Hover text is appropriate only for secondary controls.
-
-
-3. DO NOT REBUILD GOOGLE CALENDAR
-
-Complex calendar management such as creating, editing,
-deleting events and appointment schedules belongs in
-Google Calendar.
-
-The widget can open Google Calendar when the user needs
-those capabilities.
-
-
-4. QUIET DESKTOP BEHAVIOUR
-
-The application should behave like a desktop widget:
-
-- start automatically with Windows
-- remain visible on the desktop
-- not steal focus unnecessarily
-- not open visible browser windows for background work
-- refresh silently
-- default to a locked position
-
-
-5. FAST STARTUP
-
-Cached events/tasks should be displayed immediately when the
-application starts.
-
-Network synchronisation happens afterwards in the background.
-
-
-6. GRACEFUL FAILURE
-
-Network, Google Calendar or scraper failures should not make
-the widget suddenly empty.
-
-If fresh data cannot be retrieved, continue displaying the
-last successful cached data and show a lightweight status such
-as:
-
-    Warning: Showing saved events - Updated 12 min ago
-
-
-7. SOURCE OF TRUTH
-
-Google Calendar / Google Tasks are the authoritative data
-sources.
-
-Local cache exists only to improve startup speed and
-resilience. It is not an independent calendar database.
-
-
-8. LOW-EFFORT STATUS
-
-Synchronisation state should be understandable at a glance.
-
-Examples:
-
-    Updated just now
-    Updated 3 min ago
-    Warning: Showing saved events - Updated 18 min ago
-
-The user should not need to inspect logs or terminals.
-
-
-9. BACKGROUND IMPLEMENTATION SHOULD BE INVISIBLE
-
-OAuth, Chrome debugging, Playwright scraping, caching and
-network requests are implementation details.
-
-Normal users should not have to manually start Chrome,
-run PowerShell commands, or understand these systems.
-
-
-10. KEEP THE PRODUCT SMALL
-
-Before adding a feature, ask:
-
-    Does this reduce the effort required to understand
-    what is coming up?
-
-If not, it probably does not belong in the always-visible
-widget UI.
+The scraper uses Playwright and an app-owned Chromium browser
+profile (Edge by default; Chrome and Brave are also supported).
 
 ============================================================
-AI COLLABORATION GUIDANCE
+FIRST-RUN SETUP
 ============================================================
 
-When suggesting changes:
+Before the normal widget starts:
 
-- preserve the glanceable-widget philosophy
-- prefer simpler UX over additional features
-- avoid turning the app into a full calendar client
-- keep network/browser work outside the UI thread
-- preserve cached data when refresh fails
-- avoid unnecessary popups
-- avoid adding permanently visible controls for rare actions
-- treat Google Calendar as the management interface
-- prioritize reliability at Windows startup
+1. Google OAuth sign-in for Calendar + Tasks APIs
+2. Choose Edge / Chrome / Brave
+3. Sign in to Google Calendar in the app-owned browser profile
+4. Verify Calendar sign-in
+5. Mark setup complete
 
-Sensitive credentials, browser profiles, caches and generated
-files must never be included in this context or committed to Git.
+Normal browser work is headless after setup.
 
-"@ | Out-File $output -Encoding UTF8
+============================================================
+LOCAL DATA
+============================================================
 
+Per-user runtime data lives under:
 
-# ============================================
-# PROJECT STRUCTURE
-# ============================================
+    %LOCALAPPDATA%\DesktopCalendar\
 
-@"
+including:
+
+- token.json
+- cache.json
+- BrowserProfiles\
+
+Preferences and setup state use Qt QSettings.
+
+Sensitive credentials, OAuth tokens, browser profiles, caches,
+generated build output and personal data must never be included
+in this AI context or committed to Git.
+
+============================================================
+RELIABILITY PRIORITY
+============================================================
+
+The Google Calendar UI scraper is a supplementary, inherently
+less stable integration.
+
+Future reliability hardening must ensure that scraper failure
+cannot silently make the calendar appear complete.
+
+See RELIABILITY.md.
 
 ============================================================
 PROJECT STRUCTURE
 ============================================================
 
-"@ | Out-File $output -Append -Encoding UTF8
-
+"@ | Out-File $output -Encoding UTF8
 
 foreach ($file in $includeRootFiles) {
-
     if (Test-Path $file) {
         "[FILE] $file" |
         Out-File $output -Append -Encoding UTF8
     }
 }
 
-
 foreach ($folder in $includeFolders) {
-
     if (-not (Test-Path $folder)) {
         continue
     }
@@ -279,16 +174,13 @@ foreach ($folder in $includeFolders) {
 
     Get-ChildItem $folder -Recurse |
     Where-Object {
-
         $item = $_
 
         -not ($excludeNames | Where-Object {
             $item.FullName -match "\\$([regex]::Escape($_))(\\|$)"
         })
-
     } |
     ForEach-Object {
-
         $relative =
             $_.FullName.Substring((Get-Location).Path.Length + 1)
 
@@ -298,18 +190,11 @@ foreach ($folder in $includeFolders) {
         else {
             "[FILE] $relative"
         }
-
     } |
     Out-File $output -Append -Encoding UTF8
 }
 
-
-# ============================================
-# FUNCTION ĐỂ DUMP FILE
-# ============================================
-
 function Add-FileToContext {
-
     param (
         [string]$FilePath
     )
@@ -320,9 +205,7 @@ function Add-FileToContext {
 
     $file = Get-Item $FilePath
 
-    # Không đọc file quá lớn (> 200 KB)
     if ($file.Length -gt 200KB) {
-
         @"
 
 ============================================================
@@ -348,15 +231,8 @@ FILE: $FilePath
     Out-File $output -Append -Encoding UTF8
 }
 
-
-# ============================================
-# ROOT FILE CONTENTS
-# ============================================
-
 foreach ($file in $includeRootFiles) {
-
     if (Test-Path $file) {
-
         $extension =
             [System.IO.Path]::GetExtension($file).ToLower()
 
@@ -366,20 +242,13 @@ foreach ($file in $includeRootFiles) {
     }
 }
 
-
-# ============================================
-# SOURCE CODE CONTENTS
-# ============================================
-
 foreach ($folder in $includeFolders) {
-
     if (-not (Test-Path $folder)) {
         continue
     }
 
     Get-ChildItem $folder -Recurse -File |
     Where-Object {
-
         $file = $_
 
         ($allowedExtensions -contains $file.Extension.ToLower()) -and
@@ -387,17 +256,14 @@ foreach ($folder in $includeFolders) {
         -not ($excludeNames | Where-Object {
             $file.FullName -match "\\$([regex]::Escape($_))(\\|$)"
         })
-
     } |
     ForEach-Object {
-
         $relative =
             $_.FullName.Substring((Get-Location).Path.Length + 1)
 
         Add-FileToContext $relative
     }
 }
-
 
 Write-Host ""
 Write-Host "============================================"
