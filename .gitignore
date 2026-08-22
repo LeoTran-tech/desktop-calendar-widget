@@ -12,6 +12,7 @@ venv/
 config.json
 credentials.json
 token.json
+token.backup.json
 
 # Generated context / dumps
 ai_context.txt
@@ -25,3 +26,8 @@ google_calendar_profile/
 ChromeProfile/
 calendar-debug-profile/
 cache.json
+
+# Build output
+build/
+dist/
+installer_output/   
